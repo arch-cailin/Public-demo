@@ -1,0 +1,1258 @@
+---
+title: "Assignment 1 - Analytics"
+format:
+  pdf:
+    pdf-engine: pdflatex
+    include-in-header:
+      text: |
+        \usepackage{amsmath}
+        \usepackage{amssymb}
+        \usepackage{graphicx}
+        \usepackage{caption}
+        \captionsetup[figure]{font=small}
+        \captionsetup[table]{font=small}
+        \usepackage{hyperref}
+editor: visual
+execute: 
+  warning: false
+  message: false
+  echo: false
+---
+
+```{r question 1}
+
+# ====================
+# Setup
+# ====================
+
+set.seed(99)
+
+# Load libraries:
+# related to plotting and data manipulation
+library(tidyverse)
+library(ggplot2)
+library(ggcorrplot)
+library(cowplot)
+library(GGally)
+library(knitr)
+library(kableExtra)
+
+# Read in the data:
+
+data <- read.csv("listings.csv")
+N <- nrow(data)
+desc <- read.csv("variable_descriptions.csv")
+
+
+# =============================================
+# Data pre-processing:
+# =============================================
+
+# remove listing ID, host ID, neighbourhood ward
+
+data <- data[,-(1:2)]
+ward <- which(names(data) == "neighbourhood_ward")
+#length(unique(data$neighbourhood_ward))
+
+# Check if there's any (ordinal) pattern to ward:
+
+#ward_lat <- ggplot(data = 
+#                         data.frame(ward = train$neighbourhood_ward,
+#                                    lat = train$longitude, 
+#                                    long = train$longitude),
+#                       mapping = aes(x = ward, colour=ward)) +
+#  geom_boxplot(aes(y=lat))
+
+#ward_lat
+data <- data[,-ward]
+
+# We want the factor variables and the boolean variables to 
+# be treated as factor variables:
+
+# separate the continuous and categorical variates
+# (note that the variables' classes are listed as 'character' for the
+# non-continuous variables and as 'integer' or 'numeric' for the continuous
+# ones)
+
+#classes <- c()
+#for (i in 1:ncol(data)){
+#  classes[i] <- class(data[[i]])
+#}
+#classes
+
+
+fig_dir <- "_fig"
+if (!dir.exists(fig_dir)) {
+  dir.create(fig_dir, recursive = TRUE)
+}
+
+
+cont <- data[, sapply(data, function(x) class(x) != "character")]
+char <- data[, sapply(data, function(x) class(x) == "character")]
+
+for (i in names(char)){
+  if(i!="host_since"){
+    data[[i]] = as.factor(data[[i]])
+  }
+  else{
+    data[[i]] <- as.Date(data[[i]], format = "%Y/%m/%d")
+    # We'd prefer to treat date as a numeric variable:
+    data[[i]] <- as.numeric(data[[i]])
+  }
+}
+
+# SPLIT THE DATA INTO TRAINING AND TESTING SETS
+train_idx <- sample(N, 0.8*N, replace=FALSE)
+train <- data[train_idx,]
+test <- data[-train_idx,]
+
+
+# =====================================================
+# Correlation plot/heat map of the continuous variables
+# =====================================================
+
+cont <- sapply(train, function(x) !is.factor(x))
+cont <- train[,cont]
+
+# Remove the variables with correlations less than 0.8 and/or that are not 
+# potential predictors
+cont <- cont |> select(-c(review_scores_rating, longitude, host_since, latitude, host_acceptance_rate, host_response_rate, maximum_nights_avg_ntm, maximum_nights, reviews_per_month, number_of_reviews))
+
+# create a directory for the correlation plot
+dir.create("_fig", showWarnings = FALSE)
+
+cont_corrplot <- ggcorrplot(
+  cor(cont),
+  type = "full",
+  hc.order = TRUE,
+  lab = TRUE,        
+  lab_size = 4,
+  tl.cex = 8,
+  tl.srt = 45
+) +
+theme(
+  legend.text = element_text(size = 30),
+  legend.title = element_text(size = 30),
+  plot.title = element_text(size=32)
+) +
+  theme_cowplot() +
+  theme(
+    panel.background = element_rect(fill='white'),
+    plot.background = element_rect(fill='white'),
+    axis.text.x = element_text(angle=45, hjust=1)
+    
+  ) +
+  labs(title = "Abridged heat map of the \n training set's correlation matrix",
+       x=NULL, y=NULL)
+
+# save the correlation plot in the directory
+ggsave("_fig/cont_corrplot.png",
+       plot = cont_corrplot,
+       width = 8,
+       height = 8,
+       dpi = 300)
+
+
+# ================================
+# Marginal distributions
+# ================================
+
+# summary statistics for price
+
+price_median <- median(train$price)
+price_mean <- mean(train$price)
+price_75 <- quantile(train$price, 0.75)
+
+# Create a data frame for vertical lines
+vlines <- data.frame(
+  statistic = c("Median", "Mean", "75th Percentile"),
+  value = c(price_median, price_mean, price_75)
+)
+
+# Plot distribution at normal scale, without the lines:
+
+price_plot_1 <- ggplot(train, aes(x = price)) +
+  geom_density(fill = "grey", alpha = 0.3) +
+  labs(x = "Price", y = "Density", title = "Marginal distribution of price") +
+  theme_cowplot()
+
+# zoom in and plot the lines
+
+price_plot_2 <- ggplot(train, aes(x = price)) +
+  geom_density(fill = "grey", alpha = 0.3) +
+  geom_vline(
+    data = vlines,
+    aes(xintercept = value, color = statistic),
+    linetype = "dotted", size = 1
+  ) +
+  coord_cartesian(xlim = c(500,3800)) +
+  scale_color_manual(name = "Legend",
+                     values = c("Median" = "maroon", 
+                                "Mean" = "olivedrab", 
+                                "75th Percentile" = "royalblue1")) +
+  labs(x = "Price", y = "Density", color = "Statistic", title = "Marginal distribution of price") +
+  theme_cowplot()
+
+ggsave('_fig/price_full.png', plot = price_plot_1, height=5, width=5, dpi=300)
+ggsave('_fig/price_zoom.png', plot = price_plot_2, height=5, width=5, dpi=300)
+
+
+# Split the training and test sets according to this threshold:
+
+perc75 <- as.numeric(quantile(train$price, 0.75))
+
+train$price <- as.factor(ifelse(train$price>perc75, 1, 0))
+test$price <- as.factor(ifelse(test$price>perc75, 1,0))
+
+# statistics for reporting:
+
+report_perc <- round(perc75, 2)
+report_mean <- round(price_mean, 2)
+
+```
+
+# Introduction
+
+Recent times have seen a rise in the use of short-term rental platforms, such as Airbnb, which have impacted the affordability and availability of long-term accommodation in Cape Town. In this project, we will model 2025 Airbnb listing data for Cape Town to predict a variable impacting the property market. We will choose this outcome from between `price`, `host_listings_count` and `availability_365` (the listing's availability 365 days in the future), identify a threshold to transform it into a binary outcome and fit and tune a selection of four different models. After a process of selecting a final model, we will evaulate it on the test set and analyse our findings.
+
+# Question One
+
+## Pre-Processing and Exploratory Analysis of the Data
+
+Firstly, we choose to exclude the `id` and `host_id` from all our modelling as IDs should be assigned completely randomly and should thus be independent and non-informative of any trends in the data.
+
+Additionally, we exclude `neighbourhood_ward` as similar information is contained in latitude and longitude, modelling them as factor variables would make the models unnecessarily large (there are 66 listed wards), and the wards are not ordered well enough to be ordinal (they are unordered with respect to location measures such as latitude and longitude).
+
+Reasoning that the experience of a host may well affect their success, we choose to retain the `host_since` predictor (the date the host/user was created), but we convert it to a numeric variable (coded in R as the number of days since 1 January 1970). Uncertain of the nature of its effect (if any) on our response, we opted not to model it as a factor variable (with years or year-month pairings as levels).
+
+By way of a simple EDA (experimental data analysis), we plot a heat map (Figure \ref{fig:cont_corrplot}) depicting the correlation structure between only the continuous variables which were at least 80% correlated and/or were one of our potential predictors. We will refer to this correlation structure in later sections of the report.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width = 0.6\textwidth]{_fig/cont_corrplot.png}
+\caption{Heat map of the correlation between selected continuous variates in the Airbnb listings data (i.e. those at least 80\% correlated with another variate and/or a potential predictor).}
+\label{fig:cont_corrplot}
+\end{figure}
+
+## Choice of a Response Variable
+
+We choose the `price` variable as our target variable. Information on what drives property prices is very relevant to our key concern of investigating the impact of Airbnb on the housing-market. Of the three potential target variables, `price` is also the one that shows the most linear correlation with other features in the above heat map plot, indicating promising relationships to be explored, at least on a linear scale. We explore its marginal distribution (shown in Figure \ref{fig:price_marg}) to inform our choice of a percentile used to partition and transform it into a binary predictor.
+
+\begin{figure}[H]
+    \centering
+    
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{_fig/price_full.png}
+        \label{fig:price_full}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{_fig/price_zoom.png}
+        \label{fig:price_zoom}
+    \end{subfigure}
+    
+    \caption{The marginal distribution of "price" displayed over the full range (left), and zoomed in with summary statistics indicated (right).}
+    \label{fig:price_marg}
+\end{figure}
+
+The above shows that `price`'s distribution is very positively skewed. As such, we choose a threshold of the 75th percentile and define a new binary variable, `HighPrice`: prices greater than R`r report_perc` will be considered high, with `HighPrice` = 1 (conversely, if the price is lower than R`r report_perc`, we set `HighPrice` = 0). This partition is suited to the problem due to its distance from the peaked mode of the data (which in turn lies very close to the median) - in this context it would not make sense to classify the most frequent prices as particularly "high", and by looking at a higher percentile for our partition, we create a more exclusive/premier class (one more aligned with the colloquial notion of "high price"). We are studying the general housing-market impact and as such are not interested in the extreme elite market - we just want to capture the trend of above average pricing. As such we will not choose a percentile larger than 75% (which happens to sit very close to our mean at the 74th percentile - a mean price of R`r report_mean`). This has the added benefit of not overly imbalancing our classes. While there is now a mild imbalance, with 2000 high price (`HighPrice`=1) observations out of a training set size of 8000, there remain enough positive observations to fit our models, and we can take this imbalance into account when choosing metrics by which to evaluate our models.
+
+# Question Two (a)
+
+In this problem, there is no disparity in cost for misclassification. A desirable model would thus be one which is proficient in distinguishing between `HighPrice` outputs of 0 and 1. We will thus use AUROC (the Area Under the Receiver Operating Characteristic curve) as the metric we consider in all our hyperparameter and model selections. AUROC is also threshold invariant, a benefit since we will be comparing models before tuning over the threshold parameter. We evaluate all the models below using a decision threshold of $\tau = 0.5$.
+
+## Regularised Elastic-net logistic regression
+
+We used the following hyperparameter search space to fit our regularised elastic-net logistic regression models (with only linear terms):
+
+\begin{itemize}
+\item $\alpha$: 0.0, 0.2, 0.4, 0.6, 0.8, 1.0
+\item $\lambda$: $e^{-8} \text{ to } e^{-4}$ (20 values)
+\end{itemize}
+
+```{r elastic_net}
+
+# Load libraries and download packages (if required)
+
+
+
+if(!requireNamespace("caret", quietly = TRUE)){
+  install.packages("caret")
+}
+if(!requireNamespace("ROCR", quietly=TRUE)){
+  install.packages("ROCR")
+}
+library(caret)
+library(glmnet)
+library(ROCR)
+
+library(doParallel)
+
+#cl <- makeCluster(3)   
+#registerDoParallel(cl)
+#clusterEvalQ(cl, library(ROCR))
+
+# Caret will want the class levels to be valid R variable names
+# Do this for both the training and test sets now:
+levels(train$price) <- c("ave", "high")
+levels(test$price) <- c("ave", "high")
+
+set.seed(99)
+
+# Note: glmnet() itself requires data to be one-hot encoded, but 
+# the caret train() wrapper will handle this 
+
+# glmnet() should have a default standardize = TRUE argument so 
+# standardizing our variables before should not be necessary
+
+# ============================================
+# Elastic net glm gridsearch
+# ============================================
+
+# This summary function will be used with the caret::train() function in
+# fitting all models 
+
+summary_fn <- function(data, lev = NULL, model = NULL) {
+  
+  # caret gives the summary function a data frame with obs | pred | prob(no) 
+  # | prob(yes) - the last two cols only if classProbs = TRUE
+  
+  # predicted probabilities for positive class
+  pred <- data[[lev[2]]]
+  
+  # true labels
+  labs <- data$obs
+  
+  # predicted labels with threshold 0.5
+  p_labs <- ifelse(pred >= 0.5, lev[2], lev[1])
+  p_labs <- factor(p_labs, levels = lev)
+  
+  # confusion matrix
+  t <- table(p_labs, labs)
+  
+  # metrics
+  acc <- mean(p_labs == labs)
+  rec <- recall(t, lev[2])
+  sp  <- specificity(t, lev[1])
+  pr  <- precision(t, lev[2])
+  f1  <- F_meas(t, lev[2])
+  
+  auc <- performance(
+           prediction(pred, labs),
+           "auc"
+         )@y.values[[1]]
+  
+  metrics <- c(
+    Accuracy = acc,
+    F1 = f1,
+    Precision = pr,
+    Recall = rec,
+    Specificity = sp,
+    AUROC = auc
+  )
+  
+  return(metrics)
+}
+
+
+ctrl <- trainControl(method = 'cv', number = 10, 
+                     classProbs = TRUE,
+                     summaryFunction = summary_fn, savePredictions = "all")
+# savePredictions saves out-of-fold predictions for CV, for each combination of parameters in the grid
+
+# classProbs = TRUE is a caret argument used to generate the predicted probabilities and pass them through to the summary function
+
+#glm_grid <- expand.grid(alpha = seq(0, 1, 0.2),
+#                              lambda = exp(seq(-8, -4, length.out = 20)))
+
+#glm_gridsearch2 <- train(price ~ ., data = train,
+#                               method = 'glmnet',
+#                              family = 'binomial',
+ #                        metric = "AUROC",
+  #                             trControl = ctrl, 
+#                               tuneGrid = glm_grid)
+
+#stopCluster(cl)
+
+#save(glm_gridsearch2, file = "glm_gridsearch2.Rdata")
+load('glm_gridsearch2.Rdata')
+
+# Save a plot to include with latex later
+png("_fig/glm_selection.png", width = 5*300, height = 5*300, res = 300)
+
+plot(glm_gridsearch2, ylim=c(0.9256,0.9261), main = "Hyperparameter selection plot \n for elastic-net logistic regression", xlab = expression(lambda), ylab = 'AUROC (CV)', auto.key = list(title = expression(alpha), cex.title = 1.2, lines = TRUE, points = FALSE))
+
+invisible(dev.off())
+
+glm_max <- glm_gridsearch2$results |> 
+  slice_max(AUROC, n=1) |> 
+  mutate(lambda = log(lambda)) |> 
+  round(3)
+
+simpler_glm <- glm_gridsearch2$results |> 
+  filter(alpha==0.2) |> 
+  slice_max(AUROC, n=1) |> 
+  mutate(lambda=log(lambda)) |> 
+  round(3)
+
+
+glm_for_table <- simpler_glm |>  
+  mutate(Model = 'Glm') |> 
+  select(Model, Accuracy:AUROC) |> 
+  mutate(across(Accuracy:AUROC, ~round(.x,3))) |> 
+  rename(`F1 Score` = F1)
+
+```
+
+The cross-validated AUROC results for this grid search are represented in Figure \ref{fig:glm_plot} below:
+
+\begin{figure}[H]
+    \centering
+    
+    \begin{subfigure}[t]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{_fig/glm_selection.png}
+        \caption{Plot of the cross validated AUROC for elastic-net logistic regression models fitted to a grid of hyperparameters: alpha (the mixing percentage) and lambda (the regularisation parameter).}
+        \label{fig:glm_plot}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[t]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{_fig/knn_selection.png}
+        \caption{Plot of the cross validated AUROC for K nearest neighbours models fitted over a range of the hyperparameter, K.}
+        \label{fig:knn_plot}
+    \end{subfigure}
+    
+    \label{fig:knn_glm_plots}
+\end{figure}
+
+The maximum AUROC, at $\alpha$ = `r glm_max$alpha` and $\lambda = e^{-5.684}$, was `r glm_max$AUROC`. However, this result has a CV AUROC standard deviation of `r glm_max$AUROCSD`, and we can see on the above plot that there is another hyperparameter combination that will yield a similar maximal AUROC (in fact only differing in the 6th decimal place) and which corresponds to a more regularised model (with a higher $\lambda$) at $\lambda = e^{-5.053}$ and $\alpha = 0.2$. We will select this model, of the elastic-net logistic regression models.
+
+## K Nearest Neighbours
+
+```{r knn}
+
+fig_dir <- "_fig"
+if (!dir.exists(fig_dir)) {
+  dir.create(fig_dir, recursive = TRUE)
+}
+
+
+set.seed(99)
+library(doParallel)
+# Take out availability 60 - highly correlated with both 30 and 90
+# Take out bedrooms, bathrooms, beds, minimum_nights_avg_ntm
+
+train_knn <- train |> 
+  as_tibble() |> 
+  select(-c(beds, bedrooms, bathrooms, 
+availability_60, minimum_nights_avg_ntm))
+
+# One-hot encode the data (caret doesn't handle one-hot encoding well
+# in this case)
+
+train_knn_fewer <- model.matrix(price~.-1, data = train_knn)
+train_knn_fewer <- data.frame(price = train$price, train_knn_fewer)
+
+
+
+train_knn_dummies <- model.matrix(price~.-1, data = train)
+train_knn_dummies <- data.frame(price = train$price, train_knn_dummies)
+
+library(doParallel)
+#cl <- makeCluster(2)  
+#registerDoParallel(cl)
+#clusterEvalQ(cl, library(ROCR))
+
+knn_grid <- expand.grid(k = ((4:40)*2 - 1)) 
+
+
+# Specify the CV procedure
+ctrl <- trainControl(method = 'cv', number = 10, verboseIter = F, summaryFunction = summary_fn, classProbs = TRUE, savePredictions = 'all')
+
+#knn_gridsearch2 <- train(price ~.,
+#                data = train_knn_fewer,
+#                method = 'knn', 
+#             preProcess = c("center","scale"),# scale predictors
+#             metric = "AUROC",
+#                trControl = ctrl,
+#                tuneGrid = knn_grid)
+
+
+#save(knn_gridsearch_fewervars, file='knn_gridsearch_fewervars.RData')
+
+
+#save(knn_gridsearch2, file = 'knn_gridsearch2.RData')
+
+load('knn_gridsearch2.Rdata')
+load('knn_gridsearch_fewervars.Rdata')
+
+knn_fewer_max <- knn_gridsearch_fewervars$results |> 
+  slice_max(AUROC, n=1) |> 
+  round(3)
+
+knn_max <- knn_gridsearch2$results |> 
+  slice_max(AUROC, n=1) |> 
+  round(3)
+
+# Save a plot to include with latex later
+png("_fig/knn_selection.png", width = 5*300, height = 5*300, res = 300)
+
+plot(knn_gridsearch2, ylim = c(0.910,0.92), main = "Hyperparameter selection plot \n for K nearest neighbours", xlab = 'K', ylab = 'AUROC (CV)')
+
+invisible(dev.off())
+
+
+knn_for_table <- knn_gridsearch2$results |> 
+  slice_max(AUROC, n=1) |> 
+  mutate(Model = 'KNN') |> 
+  select(Model, Accuracy:AUROC) |> 
+  mutate(across(Accuracy:AUROC, ~round(.x,3))) |> 
+  rename(`F1 Score` = F1)
+#stopCluster(cl)
+
+```
+
+Initially, we excluded the `bedrooms`, `bathrooms`, `beds`, `minimum_nights_avg_ntm` and `availability60` predictors from modelling, when fitting K Nearest Neighbours (KNN), over $K = 3, 5, 7, \ldots, 77, 79$. Our reasoning was that the KNN algorithm struggles with correlated predictors (see again Figure \ref{fig:cont_corrplot}) due to their distortion on the distances in the feature space. The maximum AUROC achieved by this search was `r knn_max$AUROC`. However, we then fit the KNN model, over the same range of K, to all of our predictors and achieved a noticeably higher AUROC score of `r knn_max$AUROC`. This occurs at $K=59$, with a downward trend on the CV AUROC plot (Figure \ref{fig:knn_plot}) thereafter. We choose this model, of the KNN models.
+
+## Random Forest
+
+```{r random forest}
+
+# ranger doesn't need one-hot encoding and is okay with factor levels
+# being character strings
+
+if(!requireNamespace("ranger", quietly = TRUE)){
+  install.packages("ranger")
+}
+
+
+fig_dir <- "_fig"
+if (!dir.exists(fig_dir)) {
+  dir.create(fig_dir, recursive = TRUE)
+}
+
+library(ranger)
+set.seed(99)
+
+# It proved very difficult to get the predicted probabilities out of ranger
+# inside the caret wrapper, and the only metric supplied through oob was 
+# accuracy. Therefore chose to use cv
+
+#cl <- makeCluster(3)   
+#registerDoParallel(cl)
+#clusterEvalQ(cl, library(ROCR))
+
+
+# Create combinations of hyperparameters
+  rf_grid <- expand.grid(
+    mtry = round(seq(2, 25, length.out=10)),
+    splitrule = c('gini','hellinger'),          
+    min.node.size = c(1,2, 3,5,7)
+  )
+  
+  ctrl <- trainControl(
+    method = 'cv', 
+    number =10,
+    verboseIter = FALSE, 
+    savePredictions = "all", 
+    classProbs = TRUE,
+    summaryFunction = summary_fn
+  )
+
+#  rf_gridsearch <- train(
+#    price ~ .,
+#    data = train,
+#    method = 'ranger',
+#    metric = "AUROC",
+#    num.trees = 500,
+#    trControl = ctrl,
+#    tuneGrid = rf_grid
+#  )
+
+
+#save(rf_gridsearch, file = 'rf_gridsearch.Rdata')
+
+#stopCluster(cl)
+load('rf_gridsearch.Rdata')
+
+# Save a plot to include with latex later
+png("_fig/rf_selection.png", width = 5*300*2, height = 5*300, res = 300)
+
+plot(rf_gridsearch, main = "Hyperparameter selection plot for the random forest models", xlab = 'No. of randomly selected predictors', ylab = 'AUROC (CV)')
+
+invisible(dev.off())
+
+rf_best_auroc <- rf_gridsearch$results |>
+  slice_max(AUROC, n=1) 
+
+rf_for_table <- rf_gridsearch$results |> 
+  slice_max(AUROC, n=1) |> 
+  mutate(Model = 'Random forest') |> 
+  select(Model, Accuracy:AUROC) |> 
+  mutate(across(Accuracy:AUROC, ~round(.x,3))) |> 
+  rename(`F1 Score` = F1)
+
+```
+
+We used the following hyperparameter search space to fit our random forest models:
+
+\begin{itemize}
+\item No. of randomly selected predictors: `r paste(round(seq(2, 25, length.out=10)), collapse = ", ")`
+\item Minimal node size: 1, 2, 3, 5, 7
+\item Split rule: Gini, Hellinger
+\end{itemize}
+
+Below are the CV AUROC results for this grid search, represented in Figure \ref{fig:rf_plot}:
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\linewidth]{_fig/rf_selection.png}
+\caption{Plot of the cross validated AUROC for random forest models fitted to a grid of hyperparameters: the number of randomly selected predictors, split rule and the minimal node size.}
+\label{fig:rf_plot}
+\end{figure}
+
+From the above, it is clear that Hellinger was the best split rule for this data set. The AUROC scores of these models (in the plot on the right) were closely tied, with low and very similar CV AUROC standard deviations. In this case, we thus simply select the hyperparameters which yielded the highest AUROC (`r round(rf_best_auroc$AUROC,3)`): a Hellinger split rule, `r rf_best_auroc$mtry` randomly selected predictors and a minimal node size of `r rf_best_auroc$min.node.size`. The CV AUROC standard deviation of this model was `r round(rf_best_auroc$AUROCSD,3)`.
+
+## Gradient Boosted Trees:
+
+```{r gradient boosting}
+
+
+if(!requireNamespace("gbm", quietly = TRUE)){
+  install.packages("gbm")
+}
+library(gbm)
+
+fig_dir <- "_fig"
+if (!dir.exists(fig_dir)) {
+  dir.create(fig_dir, recursive = TRUE)
+}
+
+# gbm only requires response to be numeric without caret
+
+  
+#head(train$price)
+#head(train$price)
+set.seed(99)
+
+library(doParallel)
+
+#cl <- makeCluster(3)   
+#registerDoParallel(cl)
+#clusterEvalQ(cl, library(ROCR))
+
+#system.time({
+#ctrl <- trainControl(method = 'cv', number = 10, verboseIter = F, summaryFunction = summary_fn, classProbs = TRUE, savePredictions = 'all')
+
+gbm_grid <- expand.grid(n.trees = c(500, 750, 1000),
+                               interaction.depth = c(10,15,20),
+                               shrinkage = c(0.1, 0.05, 0.01),
+                               n.minobsinnode = c(3,5,8))
+ 
+#gbm_gridsearch_final <- train(price ~ ., data = train,
+#                               method = 'gbm',
+#                               distribution = 'bernoulli',
+#                                metric = "AUROC",                               
+#                                trControl = ctrl,
+#                               verbose = FALSE,
+#                               tuneGrid = gbm_grid)
+
+#})
+#save(gbm_gridsearch_final, file = 'gbm_gridsearch_final.Rdata')
+load('gbm_gridsearch_final.Rdata')
+
+
+#max_gbm <- gbm_gridsearch$results |> 
+#  slice_max(AUROC, n=1) |> print()
+#stopCluster(cl)
+
+max_gbm <- gbm_gridsearch_final$results |> 
+  slice_max(AUROC, n=1) |> round(3)
+
+# Save a plot to include with latex later
+png("_fig/gbm_selection.png", width = 5*300*2, height = 5*300*2, res = 300)
+
+plot(gbm_gridsearch_final, main = "Hyperparameter selection plot \n for the gradient boosted tree models", xlab = 'Number of trees', ylab = 'AUROC (CV)')
+
+invisible(dev.off())
+
+
+gbm_for_table <- gbm_gridsearch_final$results |> 
+  slice_max(AUROC, n=1) |> 
+  mutate(Model = 'Gbm') |> 
+  select(Model, Accuracy:AUROC) |> 
+  mutate(across(Accuracy:AUROC, ~round(.x,3))) |> 
+  rename(`F1 Score` = F1)
+```
+
+Gradient boosting is a computationally expensive method. Initially we searched the following hyperparameter space (with smaller numbers of trees):
+
+\begin{itemize}
+\item Number of trees: 100, 300, 500
+\item Interaction depth: 5, 8, 10
+\item Shrinkage: 0.01, 0.005, 0.001
+\item Minimal node size: 1, 3, 5
+\end{itemize}
+
+However, as we found that our maximum CV AUROC lay at the edges of the search space (with shrinkage = 0.01, interaction depth = 10, minimal node size = 5 and 500 trees), we decided to perform a second search, expanding our bounds to ensure that the optimal hyperparameters were not constrained by the original search:
+
+\begin{itemize}
+\item Number of trees: 500, 750, 1000
+\item Interaction depth: 10, 15, 20
+\item Shrinkage: 0.1, 0.05, 0.01
+\item Minimal node size: 3, 5, 8
+\end{itemize}
+
+Below (\ref{fig:gbm_plot}) is a plot of the resulting CV AUROC for this grid search:
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\linewidth]{_fig/gbm_selection.png}
+\caption{Plot of the cross validated AUROC for the gradient boosted tree models fitted to a grid of hyperparameters: the number of trees, interaction (max tree) depth, minimal node size and shrinkage.}
+\label{fig:gbm_plot}
+\end{figure}
+
+In this case there is a clear hyperparameter choice for the maximum AUROC (`r max_gbm$AUROC`): minimal node size = 3, number of trees = 750, interaction depth = 20 and shrinkage = 0.5. Although once again this lies at the bounds of our interaction depth and minimal node size searches, we find that we do not have the resources to search further, especially considering that any gains would likely be minimal relative to the cost.
+
+# Question Two (b)
+
+Table \ref{tab:table_compare} compares a range of cross-validated metrics for the models selected above:
+
+```{r comparison table and graph}
+
+# data frame for a comparison table:
+
+comparison <- data.frame(rbind(glm_for_table, 
+                               knn_for_table, 
+                               rf_for_table, 
+                               gbm_for_table), check.names=F)
+
+# will print the table out to include using latex:
+
+t_compare <- kable(comparison,
+      format = 'latex',
+      caption = "Table comparing selected elastic-net logistic regression, K nearest neighbours, random forest and gradient boosted tree models across a range of cross validated metrics.",
+      booktabs = TRUE,
+      label = "table_compare")
+#cat(t_compare)
+
+# ====================
+# Plot
+# ====================
+
+# Reshape to long format
+compare_long <- comparison |> 
+  pivot_longer(
+    cols = -Model,
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+# Make Metric a factor with the desired order to control the orders of the bars
+compare_long$Metric <- factor(compare_long$Metric, 
+                         levels = c("Accuracy", "F1 Score", "Precision", "Recall", "Specificity", "AUROC"))
+
+compare_plot <- ggplot(compare_long, aes(x = Metric, y = Value, fill = Model)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  labs(
+    x = "Metric",
+    y = "Score",
+    fill = "Model",
+    title = "Comparison of model performance metrics"
+  ) +
+  coord_cartesian(ylim = c(0.5, 1)) + 
+  theme_cowplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave('_fig/compare_plot.png',compare_plot, width=6, height=6, dpi=300)
+
+
+```
+
+\begin{table}
+
+\caption{\label{tab:table_compare}Table comparing the selected elastic-net logistic regression, K nearest neighbours, random forest and gradient boosted tree models across a range of cross validated metrics.}
+\centering
+\begin{tabular}[H]{lrrrrrr}
+\toprule
+Model & Accuracy & F1 Score & Precision & Recall & Specificity & AUROC\\
+\midrule
+Glm & 0.881 & 0.731 & 0.841 & 0.647 & 0.959 & 0.926\\
+KNN & 0.867 & 0.675 & 0.867 & 0.554 & 0.971 & 0.916\\
+Random forest & 0.904 & 0.798 & 0.849 & 0.753 & 0.955 & 0.954\\
+Gbm & 0.908 & 0.807 & 0.845 & 0.774 & 0.952 & 0.958\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Figure \ref{fig:compare_plot} affords us a visual representation of these results:
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.4\linewidth]{_fig/compare_plot.png}
+\caption{Plot comparing the selected elastic-net logistic regression, K nearest neighbours, random forest and gradient boosted tree models across a range of cross validated metrics.}
+\label{fig:compare_plot}
+\end{figure}
+
+# Question Two (c)
+
+Figure \ref{fig:compare_plot} makes it easy to see that the KNN model performs more poorly than the other models on all metrics, except for Precision and Specificity, where it performs best of the four. For all the other metrics, however, it is the random forest and the gradient boosted trees which rank highest, with the gradient boosted trees outperforming the random forest by a small margin each time. Since the gradient boosted trees performed best on most of the metrics, and especially AUROC and the F1 score, we will choose it as our final model. Our reasons for preferring AUROC as a measure (see the start of this section) still stand, and furthermore, since we will choose a decision threshold that maximises the F1 score in the next section, it is to our advantage that this model has the highest F1 Score of the four.
+
+# Question Three
+
+```{r Question 3a, warning=FALSE}
+
+library(caret)
+library(ggplot2)
+library(cowplot)
+
+preds <- gbm_gridsearch_final$pred
+best_params <- gbm_gridsearch_final$bestTune
+
+# Filter to best hyperparameters
+for (param in names(best_params)) {
+  preds <- preds[preds[[param]] == best_params[[param]], ]
+}
+
+
+thresholds <- seq(0, 1, by = 0.01)
+
+
+# Compute fold-wise CV F1
+f1_scores <- sapply(thresholds, function(tau) {
+  
+  # Compute F1 per fold
+  fold_f1 <- sapply(unique(preds$Resample), function(fold) {
+    
+    fold_data <- preds[preds$Resample == fold, ]
+    
+    pred_labels <- ifelse(fold_data$high >= tau, "high", "ave")
+    pred_labels <- factor(pred_labels, levels = c("ave", "high"))
+    
+    cm <- table(pred_labels, fold_data$obs)
+    
+    # Handle edge cases
+    if (nrow(cm) < 2 || ncol(cm) < 2) return(NA)
+    
+    F_meas(cm, relevant = "high")
+  })
+  
+  # Average across folds
+  mean(fold_f1, na.rm = TRUE)
+})
+
+
+# Find optimal tau
+
+best_idx <- which.max(f1_scores)
+best_tau <- thresholds[best_idx]
+best_f1 <- f1_scores[best_idx]
+
+
+# Plot f1 scores
+df_f1 <- data.frame(
+  tau = thresholds,
+  F1 = f1_scores
+)
+
+f1_plot <- ggplot(df_f1, aes(x = tau, y = F1)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_vline(xintercept = best_tau,
+             linetype = "dashed",
+             color = "red",
+             linewidth = 1) +
+  geom_point(aes(x = best_tau, y = best_f1),
+             color = "red",
+             size = 3) +
+  labs(
+    title = "Cross-Validated F1 Score vs Threshold (GBM)",
+    x = expression(tau),
+    y = "F1 Score"
+  ) +
+  theme_cowplot()
+
+f1_plot
+
+
+# Print optimal values
+cat("Optimal tau:", round(best_tau, 3), "\n")
+cat("Maximum CV F1:", round(best_f1, 3), "\n")
+```
+
+```{r, Question 3b, warning=FALSE}
+
+library(pROC)
+
+thresholds <- seq(0, 1, by = 0.01)
+
+tpr_vals <- numeric(length(thresholds))
+fpr_vals <- numeric(length(thresholds))
+
+for (i in seq_along(thresholds)) {
+  
+  tau <- thresholds[i]
+  
+  fold_metrics <- lapply(unique(preds$Resample), function(fold) {
+    
+    fold_data <- preds[preds$Resample == fold, ]
+    
+    pred_labels <- ifelse(fold_data$high >= tau, "high", "ave")
+    pred_labels <- factor(pred_labels, levels = c("ave", "high"))
+    
+    cm <- table(pred_labels, fold_data$obs)
+    
+    if (nrow(cm) < 2 || ncol(cm) < 2) return(c(NA, NA))
+    
+    tpr <- recall(cm, "high")
+    fpr <- 1 - specificity(cm, "ave")
+    
+    c(tpr = tpr, fpr = fpr)
+  })
+  
+  fold_metrics <- do.call(rbind, fold_metrics)
+  
+  tpr_vals[i] <- mean(fold_metrics[, "tpr"], na.rm = TRUE)
+  fpr_vals[i] <- mean(fold_metrics[, "fpr"], na.rm = TRUE)
+}
+
+# Data for plotting
+roc_df <- data.frame(
+  FPR = fpr_vals,
+  TPR = tpr_vals
+)
+
+
+# Point for optimal tau
+best_fold_metrics <- lapply(unique(preds$Resample), function(fold) {
+  
+  fold_data <- preds[preds$Resample == fold, ]
+  
+  pred_labels <- ifelse(fold_data$high >= best_tau, "high", "ave")
+  pred_labels <- factor(pred_labels, levels = c("ave", "high"))
+  
+  cm <- table(pred_labels, fold_data$obs)
+  
+  if (nrow(cm) < 2 || ncol(cm) < 2) return(c(NA, NA))
+  
+  tpr <- recall(cm, "high")
+  fpr <- 1 - specificity(cm, "ave")
+  
+  c(tpr = tpr, fpr = fpr)
+})
+
+best_fold_metrics <- do.call(rbind, best_fold_metrics)
+
+best_tpr <- mean(best_fold_metrics[, "tpr"], na.rm = TRUE)
+best_fpr <- mean(best_fold_metrics[, "fpr"], na.rm = TRUE)
+
+
+# Plot
+
+plot(roc_df$FPR, roc_df$TPR,
+     type = "l",
+     col = "steelblue",
+     lwd = 2,
+     xlab = "False Positive Rate",
+     ylab = "True Positive Rate",
+     main = "Cross-Validated ROC Curve (Fold-wise Averaged)")
+
+points(best_fpr, best_tpr,
+       col = "red",
+       pch = 19,
+       cex = 1.5)
+
+text(best_fpr, best_tpr,
+     labels = paste0(
+       "τ = ", round(best_tau, 2),
+       "\nF1 = ", round(best_f1, 2)
+     ),
+     pos = 4,
+     cex = 0.9)
+```
+
+```{r, Question 3c, warning=FALSE}
+
+#Predict probabilities on test set
+test_probs <- predict(gbm_gridsearch_final, newdata = test, type = "prob")[, "high"]
+
+#Apply optimal threshold (best_tau from Q3a)
+test_pred <- ifelse(test_probs >= best_tau, "high", "ave")
+test_pred <- factor(test_pred, levels = c("ave", "high"))
+
+#Confusion matrix
+cm <- table(Predicted = test_pred, Actual = test$price)
+
+#Compute metrics
+acc <- mean(test_pred == test$price)
+rec <- recall(cm, "high")
+sp  <- specificity(cm, "ave")
+pr  <- precision(cm, "high")
+f1  <- F_meas(cm, "high")
+
+# AUROC
+auc <- performance(
+  prediction(test_probs, test$price),
+  "auc")@y.values[[1]]
+
+#Store results in table 
+test_metrics <- data.frame(
+  Accuracy = acc,
+  F1 = f1,
+  Precision = pr,
+  Recall = rec,
+  Specificity = sp,
+  AUROC = auc
+)
+
+print("Test set performance (using optimal tau):")
+print(round(test_metrics, 3))
+
+
+# Compare with CV results - somewhat optional
+# Extract CV performance for best GBM
+cv_results <- gbm_gridsearch_final$results
+
+best_params <- gbm_gridsearch_final$bestTune
+
+for (param in names(best_params)) {
+  cv_results <- cv_results[cv_results[[param]] == best_params[[param]], ]
+}
+
+cv_metrics <- cv_results[, c("Accuracy", "F1", "Precision", "Recall", "Specificity", "AUROC")]
+
+print("Cross-validated performance (tau = 0.5):")
+print(round(cv_metrics, 3))
+```
+
+------------------------------------------------------------------------
+
+We observe that the Accuracy, F1 score, Recall, and AUROC of the final model evaluated on the test set are all greater than their corresponding cross-validated values obtained from the training set using the default threshold \$\\tau = 0.5\$. The improvements in F1 score and Recall (a substantial increase in this case, likely due to the classifier leveraging it to optimise the F1 score when we selected our best \$\\tau\$) are most likely driven by the adjustment of the decision threshold, rather than by any intrinsic improvement in model fit.Given this, the overall performance remains largely consistent, with only minor decreases in Sensitivity and Precision. This suggests that the model generalises well to unseen data, and that the cross-validation procedure provided a reliable estimate of its underlying performance, with the threshold tuning serving to better align the classifier with the chosen evaluation metric.The model achieves a good F1 score of 0.85 on the test set. However, we postulate, for future studies, that an alternative approach of selecting hyperparameters and a model in the previous section on the basis of F1 score may have been able to hone this further.
+
+# Question Four
+
+```{r, Question 4a, warning=FALSE, fig.width=10}
+
+library(vip)
+library(gbm)
+library(dplyr)
+library(patchwork)
+
+
+# Prepare both numeric and factor versions
+train_gbm <- train
+train_gbm$price_num <- ifelse(train_gbm$price == "high", 1, 0)  # For gbm
+train_gbm$price_factor <- train_gbm$price  # For vi_permute
+
+
+best_params <- gbm_gridsearch_final$bestTune
+
+# Fit the GBM model with numeric response
+set.seed(99)
+#final_gbm <- gbm(
+#   price_num ~ ., 
+#   data = train_gbm %>% select(-price, -price_factor),  # Remove factor versions
+#  distribution = "bernoulli",
+#  n.trees = best_params$n.trees,
+#  interaction.depth = best_params$interaction.depth,
+#  shrinkage = best_params$shrinkage,
+#  n.minobsinnode = best_params$n.minobsinnode,
+#  bag.fraction = 0.5,
+#  cv.folds = 10,
+#  n.cores = 4,
+#  verbose = FALSE
+#)
+
+#save(final_gbm, file = 'final_gbm.Rdata')
+load('final_gbm.Rdata')
+
+
+
+
+# Prepare data for permutation importance
+x_train <- train_gbm %>% select(-price, -price_num, -price_factor)  # Remove all response versions
+y_train_factor <- train_gbm$price_factor  # Factor response for vi_permute
+
+# Create prediction wrapper function - returns class predictions (factor) for accuracy
+pred_wrapper <- function(object, newdata) {
+  # Get probabilities
+  probs <- predict(object, newdata = newdata, n.trees = best_params$n.trees, type = "response")
+  # Convert to class predictions using 0.5 threshold
+  pred_class <- ifelse(probs >= 0.5, "high", "ave")
+  # Return as factor with same levels as target
+  factor(pred_class, levels = levels(y_train_factor))
+}
+
+# Test the prediction wrapper
+test_pred <- pred_wrapper(final_gbm, x_train[1:5, ])
+print("Test predictions:")
+print(test_pred)
+print("Target class levels:")
+print(levels(y_train_factor))
+
+# Calc permutation importance with acc. metric
+set.seed(99)
+perm_imp <- vi_permute(
+  object = final_gbm,
+  feature_names = colnames(x_train),
+  train = x_train,
+  target = y_train_factor,
+  metric = "accuracy",
+  pred_wrapper = pred_wrapper,
+  nsim = 5,
+  parallel = FALSE
+)
+
+# Permutation importance plot
+p1 <- vip(perm_imp, num_features = 15) + 
+  labs(
+    title = 'Permutation Variable Importance',
+    x = 'Decrease in Accuracy',
+    y = NULL
+  ) + 
+  theme_minimal()
+
+# Impurity-based importance plot
+p2 <- vip(final_gbm, num_features = 15) + 
+  labs(
+    title = 'Impurity Variable Importance',
+    x = 'Relative Influence',
+    y = NULL
+  ) + 
+  theme_minimal()
+
+# Display both plots side by side
+
+p1 + p2
+
+# Optional: Save the plots
+ggsave("_fig/permutation_importance.png", plot = p1, width = 8, height = 6, dpi = 300)
+ggsave("_fig/impurity_importance.png", plot = p2, width = 8, height = 6, dpi = 300)
+
+
+
+
+```
+
+From the variable importance plots, we observe a general agreement between the impurity-based and permutation-based measures, with a consistent set of predictors emerging as the most influential, with only the order of these predictors being the differentiating factor for these plots. The agreeableness of these plots is shown by the variables \textit{accommodates, bathrooms, }and\textit{ bedrooms} which rank highly across both measures. These variables all relate to the size and capacity of the listing, therefore suggesting that larger properties with greater hosting capacity are significantly more likely to be classified as high-price. While these variables are correlated, their joint importance indicates that the model could possibly be using multiple aspects of property size and layout to capture nonlinear effects.
+
+The different ordering of influential predictors is best shown by \textit{longitude} which is the most influential predictor under permutation importance. The reason as to why this variable is so influential is intuitive, since certain coastal and central areas are known to command substantially higher prices. With this being said, \textit{longitude} is only the third most influential predictor under impurity importance, despite being by far the most influential predictor under permutation importance. Nonetheless this indicates that geographic location plays a critical role in determining whether a listing falls into the high-price category. To support this we notice that \textit{latitude} is also consistently an influential predictor in both plots, thus reinforcing the role of spatial location.
+
+Among the less influential predictors, \textit{reviews\_per\_month} and \textit{review\_scores\_rating} contribute moderately to the model. This indicates that listings with higher activity and better perceived quality tend to be associated with higher prices, although their effect is weaker than that of structural property characteristics and location. Finally, variables such as \textit{host\_listings\_count}, \textit{host\_since}, and availability-related features (e.g. $\textit{availability\_365}$) show relatively low importance. This suggests that host behaviour and listing availability play a more limited role in determining whether a listing is classified as high-price, at least relative to location and property size. To summarise, the results indicate that location and property size are the dominant drivers of high listing prices, with review-related and host-related variables playing a secondary role.
+
+```{r, Question 4b, warning=FALSE, fig.width=12}
+
+# Partial Dependence Plots - OPTION 1 (Base R)
+library(pdp, quietly = TRUE)
+library(ggplot2)
+library(patchwork)
+library(gbm)
+library(gridExtra)
+library(grid)
+
+
+
+# Get top 4 variables
+top_vars <- perm_imp$Variable[1:4]
+
+
+# Plot each PDP (DO NOT assign to objects)
+p1 <- plot.gbm(
+  final_gbm,
+  i.var = top_vars[1],
+  n.trees = best_params$n.trees,
+  main = top_vars[1]
+)
+
+p2 <- plot.gbm(
+  final_gbm,
+  i.var = top_vars[2],
+  n.trees = best_params$n.trees,
+  main = top_vars[2]
+)
+
+p3 <- plot.gbm(
+  final_gbm,
+  i.var = top_vars[3],
+  n.trees = best_params$n.trees,
+  main = top_vars[3]
+)
+
+p4 <- plot.gbm(
+  final_gbm,
+  i.var = top_vars[4],
+  n.trees = best_params$n.trees,
+  main = top_vars[4]
+)
+
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+grid.text('Partial Predicted Log House Price', x = 0, vjust = 1, rot = 90)
+
+
+```
+
+The partial dependence plots indicate that the host-related variables have relatively weak and nonlinear effects on the predicted log house price. For **host_since**, there is no clear monotonic relationship, although there is a slight overall variation suggesting that host tenure may carry some information, possibly as a proxy for experience. Similarly, **host_response_time** shows only minor differences across categories, with slightly higher predicted prices for faster response times, but the effect is small and not practically significant.
+
+For **host_response_rate** and **host_acceptance_rate**, the relationships are more nonlinear but still modest in magnitude. Predicted price increases with response rate up to a moderate level before flattening or declining slightly, while acceptance rate exhibits a sharp change at low values followed by a largely flat pattern. These shapes suggest threshold-type effects rather than strong linear relationships. Overall, host behaviour variables contribute limited additional predictive power compared to the more dominant location and property size features identified earlier.
+
+```{r, Question 4c, warning=FALSE}
+
+# Q4(c): False positives and false negatives
+
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+# Recompute predictions safely
+test_probs_full <- predict(gbm_gridsearch_final, newdata = test, type = "prob")[, "high"]
+
+test_pred_full <- ifelse(test_probs_full >= best_tau, "high", "ave")
+test_pred_full <- factor(test_pred_full, levels = c("ave", "high"))
+
+# Combine into one dataframe
+q4c_df <- test %>%
+  mutate(
+    row_id = row_number(),
+    actual = price,
+    predicted = test_pred_full,
+    pred_prob = test_probs_full
+  )
+
+# False positives: predicted high, actually ave
+false_pos <- q4c_df %>%
+  filter(predicted == "high", actual == "ave") %>%
+  arrange(desc(pred_prob)) %>%
+  slice_head(n = 5) %>%
+  select(row_id, pred_prob, accommodates, bedrooms, bathrooms,
+         latitude, longitude, reviews_per_month, review_scores_rating)
+
+# False negatives: predicted ave, actually high
+false_neg <- q4c_df %>%
+  filter(predicted == "ave", actual == "high") %>%
+  arrange(pred_prob) %>%
+  slice_head(n = 5) %>%
+  select(row_id, pred_prob, accommodates, bedrooms, bathrooms,
+         latitude, longitude, reviews_per_month, review_scores_rating)
+
+# Output tables
+kable(false_pos, format = "latex", booktabs = TRUE, digits = 2,
+      caption = "Five false positives (predicted high, actually average).") %>%
+  kable_styling(latex_options = c("hold_position", "scale_down"))
+
+kable(false_neg, format = "latex", booktabs = TRUE, digits = 2,
+      caption = "Five false negatives (predicted average, actually high).") %>%
+  kable_styling(latex_options = c("hold_position", "scale_down"))
+
+
+```
+
+To investigate the model’s errors, we examine five false positives (predicted high price when actually not high) and five false negatives (predicted not high when actually high), as shown in Tables 3 and 4.
+
+A clear pattern emerges in the false positives: these listings tend to have relatively large capacity (high values of accommodates, bedrooms, and bathrooms), which are strong predictors of higher prices in the model. They are also associated with very high predicted probabilities (close to 1), indicating that the model is highly confident in these misclassifications. However, these listings simultaneously exhibit low review activity (very low reviews per month), suggesting that despite their size, they may not command high prices in practice—possibly due to weaker demand, location-specific effects, or unobserved quality factors not captured in the data. This indicates that the model may be over-weighting structural features (size/capacity) relative to market activity signals.
+
+In contrast, the false negatives display the opposite behaviour. These listings are generally smaller (lower accommodates, bedrooms, bathrooms), which leads the model to assign very low predicted probabilities (close to 0). However, they still achieve high prices in reality. Notably, these observations tend to have moderate to high review scores and non-negligible review activity, suggesting that factors such as quality, reputation, or desirability of location may be driving higher prices despite smaller size. This points to a limitation of the model in capturing more nuanced drivers of price beyond easily measurable structural characteristics.
+
+Overall, the misclassifications suggest that while the model captures broad structural determinants of price effectively, it struggles to fully incorporate softer signals such as demand, reputation, and potentially location-specific effects.

@@ -1,0 +1,605 @@
+---
+title: "Bayesian Computational Methods (STA4027Z) Tutorial 2"
+author: "Cailin Groll (GRLCAI001)"
+date: "28 September 2026"
+
+format:
+  pdf:
+    pdf-engine: lualatex
+    geometry:
+      - top=0.8in
+      - bottom=0.8in
+      - left=0.85in
+      - right=0.85in
+    include-in-header:
+      text: |
+        \usepackage{amsmath}
+        \usepackage[table]{xcolor}
+        \usepackage{hyperref}
+        \usepackage{fontspec}
+        \usepackage{libertinus}
+        \usepackage{titlesec}
+        \usepackage{caption}
+        \captionsetup[table]{font = small}
+
+        % Academic-looking title
+        \makeatletter
+        \renewcommand{\maketitle}{
+        \begin{center}
+        {\Large\bfseries\@title\par}
+        \vspace{0.2em}
+        \rule{\textwidth}{0.8pt}
+        \vspace{0.3em}
+        {\normalsize\@author\quad|\quad\@date\par}
+        \end{center}
+        \vspace{0.2em}
+        }
+        \makeatother
+
+        % Neater section headings
+        \titleformat{\section}
+          {\large\bfseries}
+          {\thesection}
+          {0.6em}
+          {}
+
+        \titleformat{\subsection}
+          {\normalsize\bfseries}
+          {\thesubsection}
+          {0.6em}
+          {}
+
+editor: visual
+
+execute:
+  echo: false
+  message: false
+  warning: false
+---
+
+```{r data}
+library(readxl)
+library(rje) # to get all possible model combinations
+library(tidyverse) # for manipulation of data frames
+library(kableExtra)
+
+dat <- read_excel('vs2026.xlsx')
+y <- as.matrix(dat[,1])
+X_full <- as.matrix(dat[,2:6])
+```
+
+
+```{r gibbs sampler}
+
+# ====================================
+# Helper functions:
+# ===================================
+
+# Efficient version of |S|
+Sdet <- function(X){
+  d <- ncol(X)
+  S <- diag(d) + t(X)%*%X
+  ans <- det(S)
+  return(ans)
+}
+
+# Efficient version of S^-1:
+Sinv <- function(X){
+  n <- nrow(X)
+  d <- ncol(X)
+  ans <- diag(n) - X %*% solve(diag(d) + t(X) %*% X) %*% t(X)
+  return(ans)
+}
+
+# Will use plogis to transform log odds back to probability 
+# (logistic function)
+
+# numerator of the joint posterior distribution:
+num <- function(X){
+  ans <- Sdet(X)^(-1/2) * 
+    (2 + (1/2 * t(y) %*% Sinv(X) %*% y))^(-77)
+  return(ans)
+}
+
+# function for log odds:
+f <- function(X){
+  -1/2 * log(Sdet(X)) -
+    77*log(2 + (1/2 * t(y) %*% Sinv(X) %*% y))
+}
+
+# ===============================
+# Function for one iteration of MCMC sampling:
+# ===============================
+
+# Sample one gamma vector, given the previous sampled gamma:
+gibb <- function(prev){
+  
+  store <- numeric(5) # storage for this iteration
+  set <- 1:5 # indices of all possible X's
+  
+  for (i in 1:5){
+    this <- set[set < i] # if we have already updated gamma_s, 
+    # then we must refer to the latest update of gamma_s
+    last <- set[set > i] # otherwise, if we have not yet updated
+    # gamma_s on this iteration, we must refer to the 
+    # past iteration's sampling of gamma_s 
+
+    idx1 <- c(this[store[this] == 1], 
+              i, last[prev[last] == 1]) 
+    # select these variables, 
+    # given X_i is included (gamma_i == 1)
+    idx0 <- c(this[store[this] == 1], 
+              last[prev[last] == 1])
+    # select these variables, given X_i is not included
+    # (gamma_i == 0)
+    
+    
+    X1 <- cbind(1, X_full[,idx1]) 
+    # assuming intercept always included
+    X0 <- cbind(1, X_full[,idx0])
+    
+    log_odds <- f(X1) - f(X0)
+    p <- plogis(log_odds) # get the probability that gamma_i == 1
+    
+    u <- runif(1) 
+    # sample from U(0,1) for the Bernoulli mechanism
+    if (u <= p){
+      store[i] <- 1
+    }
+    else{
+      store[i] <- 0
+    }
+  }
+  return(store)
+}
+
+# ===============================
+# Perform the Gibbs sampling
+# ===============================
+set.seed(99)
+
+# initialise gamma
+init <- rep(1, 5)
+
+# Create a matrix to store all the sampled gammas:
+Gamma <- matrix(data = NA, nrow = 8001, ncol = 5)
+# (will store them row by row)
+
+Gamma[1,] <- init
+
+# system.time({
+#   for (i in 2:8001){
+#   Gamma[i,] <- gibb(Gamma[i-1,]) 
+# }
+# })
+
+for (i in 2:8001){
+  Gamma[i,] <- gibb(Gamma[i-1,]) 
+}
+
+# Samples after burnin:
+samples <- Gamma[3002:8001,]
+```
+
+
+```{r gibbs table}
+
+# ========================================
+# Make a data frame for the models sampled via Gibbs sampling
+# ========================================
+set <- 1:5
+models <- apply(samples, 1, function(x) set[x == 1])
+# sampled models in terms of indices of X's 
+
+# data frame, where the rows are iterations:
+mcmc <- data.frame(Model = sapply(models, 
+                                  function(x) paste(c(0,x), 
+                                           collapse = ",")))
+
+# Get the Gibbs posterior probabilities of the models:
+Gibbs_df <- mcmc |> 
+  count(Model) |>
+  mutate(n = n/sum(n)) |> 
+  rename(`Gibbs Probabilities` = n)
+
+
+```
+
+
+```{r joint posterior probs}
+
+# ========================================
+# Make a df for the analytical posterior probabilities
+# ========================================
+combos <- powerSet(set) # all possible models
+
+joint <- data.frame(
+  Model = sapply(combos, function(x) paste(c(0,x), 
+                                           collapse = ",")))
+
+# system.time({
+#   # Calculate the probabilities, unnormalised:
+# Prob <- rep(NA, 32)
+# for (i in 1:32){
+#   X <- cbind(1, X_full[,combos[[i]]])
+#   Prob[i] <- num(X)
+# }
+# 
+# # Normalise the probabilities and reduce to zero those that are 
+# # really small:
+# Probabilities <- zapsmall(Prob/sum(Prob))
+#   
+# })
+
+
+# Calculate the probabilities, unnormalised:
+Prob <- rep(NA, 32)
+for (i in 1:32){
+  X <- cbind(1, X_full[,combos[[i]]])
+  Prob[i] <- num(X)
+}
+
+# Normalise the probabilities and reduce to zero those that are 
+# really small:
+joint$`Analytical Probabilities` <- zapsmall(Prob/sum(Prob))
+
+# Filter zero probabilities out of the table:
+joint <- joint |> 
+  filter(`Analytical Probabilities` > 0)
+
+
+# ==============================
+# Join the tables for presentation
+# ==============================
+
+tab <- full_join(joint, Gibbs_df, by = join_by(Model)) |> 
+  mutate(
+    `Analytical Probabilities` = 
+      round(`Analytical Probabilities`, 3),
+    `Gibbs Probabilities` = round(`Gibbs Probabilities`, 3))
+
+# Print the table to include in write-up:
+tb <- kable(tab, format = 'latex', booktabs = TRUE) |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"))
+  
+# cat(tb)
+
+```
+
+# Introduction
+
+In this exercise, we approach a variable selection problem from a Bayesian perspective. The full model may be written, 
+\begin{align}
+    \boldsymbol{y} &= X \boldsymbol{\beta} + \mathbf{e}, \quad \text{with } X:150 \times 6, \quad \boldsymbol{\beta}: 6 \times 1, \quad \mathbf{e}:150 \times 1.
+    \label{eq:regression}
+\end{align}
+
+To decide which explanatory variables should be included in the model, we introduce the parameter $\boldsymbol{\gamma} \in \Gamma = \{0,1\}^5$, a binary vector indicating which model is fit. Assuming the intercept is always included, $\boldsymbol{\gamma} = (1, 0, \ldots)$ means $X_1$ is included in the model, but $X_2$ is not. We denote the associated design matrix and coefficient vector $X_{\boldsymbol{\gamma}}$ and $\boldsymbol{\beta}_{\boldsymbol{\gamma}}$. Let $d = \sum_j \gamma_j +1$. We assume the following priors:
+\begin{align}
+    \sigma^2 &\sim \operatorname{IG}(2,2), \\
+    \boldsymbol{\beta}_{\boldsymbol{\gamma}} &\sim \operatorname{N}_d(\mathbf{0}_d, \sigma^2 I_d), \\
+    \mathbf{e} &\sim \operatorname{N}_{150}(\mathbf{0}_{150}, \sigma^2 I_{150}), \\
+    \pi(\boldsymbol{\gamma}) &= \frac{1}{2^5}.
+\end{align}
+
+# Deriving the posterior distribution
+
+We begin by deriving the posterior distribution, $\pi(\boldsymbol{\gamma} | \boldsymbol{y})$. Using Bayes' Law, we know 
+\begin{align}
+    \pi(\boldsymbol{\gamma} | \boldsymbol{y}) &= \frac{\pi(\boldsymbol{y} | \boldsymbol{\gamma}) \pi(\boldsymbol{\gamma})}{\sum_{\boldsymbol{\gamma}} \pi(\boldsymbol{y} | \boldsymbol{\gamma}) \pi(\boldsymbol{\gamma})}, \quad \text{and so}\\
+    \pi(\boldsymbol{\gamma} | \boldsymbol{y}) &= \frac{\pi(\boldsymbol{y} | \boldsymbol{\gamma})}{\sum_{\boldsymbol{\gamma}} \pi(\boldsymbol{y} | \boldsymbol{\gamma})},
+    \label{eq:bayes}
+\end{align}
+since $\pi(\boldsymbol{\gamma})$ does not depend on $\boldsymbol{\gamma}$. 
+
+To find $\pi(\boldsymbol{y} | \boldsymbol{\gamma})$, note, this time making the conditioning explicit:
+\begin{align}
+    \boldsymbol{\beta}_{\boldsymbol{\gamma}} | \boldsymbol{\gamma}, \sigma^2 &\sim \operatorname{N}_d(\mathbf{0}_d, \sigma^2 I_d) \\
+    \implies X_{\boldsymbol{\gamma}}\boldsymbol{\beta}_{\boldsymbol{\gamma}} | \boldsymbol{\gamma}, \sigma^2 &\sim \operatorname{N}_{150} (\mathbf{0}_{150}, \sigma^2 X_{\boldsymbol{\gamma}}X_{\boldsymbol{\gamma}}').
+\end{align}
+From equation \ref{eq:regression}, and assuming independence between $\mathbf{e}$ and $\boldsymbol{\beta}_{\boldsymbol{\gamma}}$, we have,
+\begin{align}
+    \boldsymbol{y} | \boldsymbol{\gamma}, \sigma^2, X_{\boldsymbol{\gamma}} \sim \operatorname{N}_{150}(\mathbf{0}_{150}, \sigma^2 (I_{150} + X_{\boldsymbol{\gamma}}X_{\boldsymbol{\gamma}}')).
+\end{align}
+Thus, 
+\begin{align*}
+    \pi(\boldsymbol{y} | \boldsymbol{\gamma}, X_{\boldsymbol{\gamma}}) &= \int_{\sigma^2} \pi(\boldsymbol{y} | \boldsymbol{\gamma}, \sigma^2, X_{\boldsymbol{\gamma}}) \; \pi(\sigma^2) \; d\sigma^2.
+\end{align*}
+Writing $S = I_{150} + X_{\boldsymbol{\gamma}}X_{\boldsymbol{\gamma}}'$ for notational convenience, we evaluate the integral:
+\begin{align}
+  &\int_{\sigma^2} (2\pi)^{-75} |\sigma^2 S| ^{-\frac{1}{2}} \exp\left(-\frac{1}{2\sigma^2} \boldsymbol{y}' S^{-1}\boldsymbol{y}\right) \frac{4}{\Gamma(2)} (\sigma^2)^{-3} \exp\left(\frac{-2}{\sigma^2}\right) \; d\sigma^2 \\
+  &= 4 (2\pi)^{-75} |S|^{-\frac{1}{2}}\int_{\sigma^2} (\sigma^2)^{-(77+1)} \exp\left(\frac{-1}{\sigma^2}\left(2 + \frac{1}{2}\boldsymbol{y}'S^{-1}\boldsymbol{y}\right)\right) \; d\sigma^2, 
+\end{align}
+by the determinant law, $|\sigma^2S|^{-\frac{1}{2}} = (\sigma^2)^{-\frac{150}{2}} |S|^{-\frac{1}{2}}$, and since $\Gamma(2) = 1$.
+The integrand looks like the kernel of the $\operatorname{IG}\left(77, \, 2 + \frac{1}{2}\boldsymbol{y}'S^{-1}\boldsymbol{y}\right)$ distribution. With that in mind, we have,
+\begin{align}
+    \pi(\boldsymbol{y} | \boldsymbol{\gamma}, X_{\boldsymbol{\gamma}}) = 4 (2\pi)^{-75} \, |S|^{-\frac{1}{2}} \, \Gamma(77) \, \left(2 + \frac{1}{2}\boldsymbol{y}'S^{-1}\boldsymbol{y}\right)^{-77}. 
+\end{align}
+Therefore, by equation \ref{eq:bayes},
+\begin{align}
+    \pi(\boldsymbol{\gamma} | \boldsymbol{y}, X_{\boldsymbol{\gamma}}) &= \frac{4 (2\pi)^{-75} \, |S|^{-\frac{1}{2}} \, \Gamma(77) \, \left(2 + \frac{1}{2}\boldsymbol{y}'S^{-1}\boldsymbol{y}\right)^{-77}}{\sum_{\boldsymbol{\gamma}} 4 (2\pi)^{-75} \, |S|^{-\frac{1}{2}} \, \Gamma(77) \, \left(2 + \frac{1}{2}\boldsymbol{y}'S^{-1}\boldsymbol{y}\right)^{-77}}, \\[6pt]
+    &= \frac{|S|^{-\frac{1}{2}} \left(2 + \frac{1}{2}\boldsymbol{y}'S^{-1}\boldsymbol{y}\right)^{-77}}{\sum_{\boldsymbol{\gamma}} |S|^{-\frac{1}{2}} \left(2 + \frac{1}{2}\boldsymbol{y}'S^{-1}\boldsymbol{y}\right)^{-77}},
+    \label{eq:post1}
+\end{align}
+where the summation is carried out over all the possible configurations of $X_{\boldsymbol{\gamma}}$. 
+
+In this case, there are only $2^5 = 32$ possible model configurations, so it is not too costly to analyse this posterior directly. In fact, to make computations cheaper and more numerically stable, we use the following known identities:
+
+\begin{align}
+    |S| &= |I_{150} + X_{\boldsymbol{\gamma}} X_{\boldsymbol{\gamma}}'| = |I_d + X_{\boldsymbol{\gamma}}' X_{\boldsymbol{\gamma}}|, \\
+    S^{-1} &= (I_{150} + X_{\boldsymbol{\gamma}} X_{\boldsymbol{\gamma}}')^{-1} = I_{150} - X_{\boldsymbol{\gamma}}(I_d + X_{\boldsymbol{\gamma}}' X_{\boldsymbol{\gamma}})^{-1} X_{\boldsymbol{\gamma}}' \quad \text{(Woodbury)}.
+\end{align}
+
+By using the expressions on the far right, we take the determinant and inverse of at most a $6 \times 6$ dimensional matrix, rather than a $150 \times 150$ one. The posterior probabilities arrived at analytically (by this method) are presented in Table \ref{tab:probs}.
+
+
+# A Gibbs sampler
+
+As an alternative to calculating the posterior probabilities directly from line \ref{eq:post1}, we could build a Gibbs sampler to sample from $\pi(\boldsymbol{\gamma} | \boldsymbol{y}, X_{\boldsymbol{\gamma}})$ according to the algorithm below. We use a single chain of $k = 8000$ iterations, but will only retain the latter $5000$ after a burn-in period.
+\begin{enumerate}
+    \item Initialise $\boldsymbol{\gamma}$: e.g. $\boldsymbol{\gamma}^{(0)} = (1,1,1,1,1)$.
+    \item Generate $\gamma_1^{(1)}$ from $\pi\left(\gamma_1 | \boldsymbol{\gamma}_{\backslash1}^{(0)}, \boldsymbol{y}\right)$, where the notation $\backslash i$ denotes the set of indices excluding $i$.
+    \item Generate $\gamma_2^{(1)}$ from $\pi\left(\gamma_2 | \gamma_1^{(1)}, \boldsymbol{\gamma}_{\backslash \{1,2\}}^{(0)}, \boldsymbol{y}\right)$.
+
+    \item[\vdots]
+
+    \item Generate $\gamma_4^{(k)}$ from $\pi\left(\gamma_4 | \boldsymbol{\gamma}_{\backslash \{4,5\}}^{(k)}, \gamma_5^{(k-1)}, \boldsymbol{y}\right)$.
+    \item Generate $\gamma_5^{(k)}$ from $\pi\left(\gamma_5 | \boldsymbol{\gamma}_{\backslash 5}^{(k)}, \boldsymbol{y}\right)$.
+\end{enumerate}
+We need a general expression for $\pi(\gamma_q | \boldsymbol{\gamma}_{\backslash q}, \boldsymbol{y})$, where $q \in \{1, \ldots, 5\}$.
+
+Note that $\gamma_q$ can take on either $0$ or $1$ and is thus Bernoulli distributed with success probability $p$:
+\begin{align}
+    p &= \frac{|S|^{-\frac{1}{2}} \left(2 + \frac{1}{2}\boldsymbol{y}'S^{-1}\boldsymbol{y}\right)^{-77} \; \mid \gamma_q =1, \boldsymbol{\gamma}_{\backslash q}}{\sum_{\gamma_q = 0}^{1} |S|^{-\frac{1}{2}} \left(2 + \frac{1}{2}\boldsymbol{y}'S^{-1}\boldsymbol{y}\right)^{-77} \; \mid \boldsymbol{\gamma}_{\backslash q}}.
+\end{align}
+
+Practically, we evaluate the log-odds for stability, what with the power $-77$:
+\begin{align}
+  \text{log odds} = \log\left(\frac{p}{1-p}\right) = \left[-\frac{1}{2}\log\left(|S|\right) - 77 \log\left(2 + \frac{1}{2}\boldsymbol{y}'S^{-1}\boldsymbol{y}\right)\right]_{\text{given } \gamma_q =1, \, \boldsymbol{\gamma}_{\backslash q}}  \\ - \left[-\frac{1}{2}\log\left(|S|\right) - 77 \log\left(2 + \frac{1}{2}\boldsymbol{y}'S^{-1}\boldsymbol{y}\right)\right]_{\text{given } \gamma_q =0, \, \boldsymbol{\gamma}_{\backslash q}}
+\end{align}
+and use the logistic function to transform it back to the probability $p$. The results of the Gibbs sampling are displayed in Table \ref{tab:probs}.
+
+# Discussion
+
+Performing a total of 8000 MCMC iterations took around 50 seconds (whereas the analytical probabilities took less than 1). This is a special case where the posterior distribution is easy to derive and evaluate: if deriving it was very messy or it took a long time to compute (for instance, in this case, if there were a very many more than 32 possible model combinations), then Gibbs sampling can be very useful as conditional posteriors are often easier to work with. The analytical probabilities (see Table \ref{tab:probs}) represent the ground truth - these are the exact probabilities of the model configurations, given the data and the set of priors we used. Since the Gibbs sampled probabilities are very close to the analytical ones (and would be identical, rounded to 2 decimal places), we can reasonably say that the sampling converged to the posterior distribution.       
+
+\begin{table}[H]
+\centering
+\caption{Table of the analytical and Gibbs sampled posterior probabilities for $\boldsymbol{\gamma}$. Values are presented correct to 3 decimal places - these are also the only models with a non-zero posterior probability after applying the \textit{zapsmall} function. The index 0 indicates the intercept which was included in all model configurations.}
+\label{tab:probs}
+\resizebox{\ifdim\width>\linewidth\linewidth\else\width\fi}{!}{
+\begin{tabular}{lrr}
+\toprule
+Model & Analytical Probabilities & Gibbs Probabilities\\
+\midrule
+\cellcolor{gray!10}{0,1,3,4} & \cellcolor{gray!10}{0.720} & \cellcolor{gray!10}{0.716}\\
+0,1,2,3,4 & 0.202 & 0.203\\
+\cellcolor{gray!10}{0,1,3,4,5} & \cellcolor{gray!10}{0.061} & \cellcolor{gray!10}{0.060}\\
+0,1,2,3,4,5 & 0.018 & 0.020\\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+Given our assumptions and the data, the most probable model by a long way is the model including variables $X_1, X_3$ and $X_4$. Since the study was based on simulated data, we know that these were in fact the correct variables used to generate the $y$'s. The next most likely model involved $X_1, X_2, X_3$ and $X_4$: the data implied that the posterior probability of this model configuration (parameter $\boldsymbol{\gamma} = (1,1,1,1,0)$) was 0.202.   
+
+\newpage
+
+# Appendix
+
+```{r}
+#| echo: true
+#| eval: false
+
+library(readxl)
+library(rje) # to get all possible model combinations
+library(tidyverse) # for manipulation of data frames
+library(kableExtra)
+
+dat <- read_excel('vs2026.xlsx')
+y <- as.matrix(dat[,1])
+X_full <- as.matrix(dat[,2:6])
+```
+
+
+```{r}
+#| echo: true
+#| eval: false
+
+# ====================================
+# Helper functions:
+# ===================================
+
+# Efficient version of |S|
+Sdet <- function(X){
+  d <- ncol(X)
+  S <- diag(d) + t(X)%*%X
+  ans <- det(S)
+  return(ans)
+}
+
+# Efficient version of S^-1:
+Sinv <- function(X){
+  n <- nrow(X)
+  d <- ncol(X)
+  ans <- diag(n) - X %*% solve(diag(d) + t(X) %*% X) %*% t(X)
+  return(ans)
+}
+
+# Will use plogis to transform log odds back to probability 
+# (logistic function)
+
+# numerator of the joint posterior distribution:
+num <- function(X){
+  ans <- Sdet(X)^(-1/2) * 
+    (2 + (1/2 * t(y) %*% Sinv(X) %*% y))^(-77)
+  return(ans)
+}
+
+# function for log odds:
+f <- function(X){
+  -1/2 * log(Sdet(X)) -
+    77*log(2 + (1/2 * t(y) %*% Sinv(X) %*% y))
+}
+
+# ===============================
+# Function for one iteration of MCMC sampling:
+# ===============================
+
+# Sample one gamma vector, given the previous sampled gamma:
+gibb <- function(prev){
+  
+  store <- numeric(5) # storage for this iteration
+  set <- 1:5 # indices of all possible X's
+  
+  for (i in 1:5){
+    this <- set[set < i] # if we have already updated gamma_s, 
+    # then we must refer to the latest update of gamma_s
+    last <- set[set > i] # otherwise, if we have not yet updated
+    # gamma_s on this iteration, we must refer to the 
+    # past iteration's sampling of gamma_s 
+
+    idx1 <- c(this[store[this] == 1], 
+              i, last[prev[last] == 1]) 
+    # select these variables, 
+    # given X_i is included (gamma_i == 1)
+    idx0 <- c(this[store[this] == 1], 
+              last[prev[last] == 1])
+    # select these variables, given X_i is not included
+    # (gamma_i == 0)
+    
+    
+    X1 <- cbind(1, X_full[,idx1]) 
+    # assuming intercept always included
+    X0 <- cbind(1, X_full[,idx0])
+    
+    log_odds <- f(X1) - f(X0)
+    p <- plogis(log_odds) # get the probability that gamma_i == 1
+    
+    u <- runif(1) 
+    # sample from U(0,1) for the Bernoulli mechanism
+    if (u <= p){
+      store[i] <- 1
+    }
+    else{
+      store[i] <- 0
+    }
+  }
+  return(store)
+}
+
+# ===============================
+# Perform the Gibbs sampling
+# ===============================
+set.seed(99)
+
+# initialise gamma
+init <- rep(1, 5)
+
+# Create a matrix to store all the sampled gammas:
+Gamma <- matrix(data = NA, nrow = 8001, ncol = 5)
+# (will store them row by row)
+
+Gamma[1,] <- init
+
+# system.time({
+#   for (i in 2:8001){
+#   Gamma[i,] <- gibb(Gamma[i-1,]) 
+# }
+# })
+
+for (i in 2:8001){
+  Gamma[i,] <- gibb(Gamma[i-1,]) 
+}
+
+# Samples after burnin:
+samples <- Gamma[3002:8001,]
+```
+
+
+```{r}
+#| echo: true
+#| eval: false
+
+# ========================================
+# Make a data frame for the models sampled via Gibbs sampling
+# ========================================
+set <- 1:5
+models <- apply(samples, 1, function(x) set[x == 1])
+# sampled models in terms of indices of X's 
+
+# data frame, where the rows are iterations:
+mcmc <- data.frame(Model = sapply(models, 
+                                  function(x) paste(c(0,x), 
+                                           collapse = ",")))
+
+# Get the Gibbs posterior probabilities of the models:
+Gibbs_df <- mcmc |> 
+  count(Model) |>
+  mutate(n = n/sum(n)) |> 
+  rename(`Gibbs Probabilities` = n)
+
+
+```
+
+
+```{r}
+#| echo: true
+#| eval: false
+
+# ========================================
+# Make a df for the analytical posterior probabilities
+# ========================================
+combos <- powerSet(set) # all possible models
+
+joint <- data.frame(
+  Model = sapply(combos, function(x) paste(c(0,x), 
+                                           collapse = ",")))
+
+# system.time({
+#   # Calculate the probabilities, unnormalised:
+# Prob <- rep(NA, 32)
+# for (i in 1:32){
+#   X <- cbind(1, X_full[,combos[[i]]])
+#   Prob[i] <- num(X)
+# }
+# 
+# # Normalise the probabilities and reduce to zero those that are 
+# # really small:
+# Probabilities <- zapsmall(Prob/sum(Prob))
+#   
+# })
+
+
+# Calculate the probabilities, unnormalised:
+Prob <- rep(NA, 32)
+for (i in 1:32){
+  X <- cbind(1, X_full[,combos[[i]]])
+  Prob[i] <- num(X)
+}
+
+# Normalise the probabilities and reduce to zero those that are 
+# really small:
+joint$`Analytical Probabilities` <- zapsmall(Prob/sum(Prob))
+
+# Filter zero probabilities out of the table:
+joint <- joint |> 
+  filter(`Analytical Probabilities` > 0)
+
+
+# ==============================
+# Join the tables for presentation
+# ==============================
+
+tab <- full_join(joint, Gibbs_df, by = join_by(Model)) |> 
+  mutate(
+    `Analytical Probabilities` = 
+      round(`Analytical Probabilities`, 3),
+    `Gibbs Probabilities` = round(`Gibbs Probabilities`, 3))
+
+# Print the table to include in write-up:
+tb <- kable(tab, format = 'latex', booktabs = TRUE) |>
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"))
+  
+# cat(tb)
+
+```

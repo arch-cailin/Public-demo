@@ -1,0 +1,665 @@
+---
+title: "Assignment 2 - Analytics"
+format:
+  pdf:
+    pdf-engine: pdflatex
+    include-in-header:
+      text: |
+        \usepackage{amsmath}
+        \usepackage{amssymb}
+        \usepackage{graphicx}
+        \usepackage{caption}
+        \captionsetup[figure]{font=small}
+        \captionsetup[table]{font=small}
+        \usepackage{hyperref}
+editor: visual
+execute: 
+  warning: false
+  message: false
+  echo: true
+---
+
+\vspace{-2cm}
+\begin{center}
+\textbf{\Large University of Cape Town} \\[1em]
+\textbf{\large Department of Statistical Sciences} \\[1em]
+\textbf{Plagiarism Declaration Form}
+\end{center}
+
+\vspace{1em}
+
+\textbf{COURSE:} \quad STA4026Z \newline \newline  \textbf{TITLE:} \quad Neural Network Assignment \newline \newline  \textbf{STUDENT NAME:} \quad Cailin Groll & Dylan Wood\newline \newline  \textbf{STUDENT NUMBER:} \quad GRLCAI001 & WDXDYL002\newline 
+
+\vspace{0.5cm}
+\begin{center}
+\textbf{PLAGIARISM DECLARATION}
+\end{center}
+\begin{enumerate}
+    \item I know that plagiarism is wrong. Plagiarism is to use another’s work and pretend that it is one’s own.
+    \item I have used a generally accepted citation and referencing style. Each contribution to, and quotation in, this tutorial/report/project from the work(s) of other people has been attributed, and has been cited and referenced.
+    \item This tutorial/report/project is my own work.
+    \item I have not allowed, and will not allow, anyone to copy my work with the intention of passing it off as his or her own work.
+    \item I acknowledge that copying someone else’s assignment or essay, or part of it, is wrong, and declare that this is my own work.
+\end{enumerate}
+
+Note that agreement to this statement does not exonerate you from the University’s plagiarism rules (\texttt{http://www.uct.ac.za/uct/policies/plagiarism\_students.pdf}).
+
+\vspace{1em}
+
+\noindent \textbf{Signature:} Cailin Groll & Dylan Wood \hspace{2cm} \textbf{Date:} \quad \textbf{20/04/26}
+
+\newpage
+
+# Question 1
+
+# a)
+
+```{r EDA}
+
+# Read in the data:
+data <- read.table("HittingTheWall_2026.txt", header = TRUE)
+# =================================
+
+# To save space, wrote a loop to plot the empirical probabilities 
+# (relative probs) of bombing per bin of fluid/carbs/ave speed)
+
+vars <- list(
+  Fluid = list(
+    bins     = seq(0.3, 2.1, 0.2), # group fluids into bins
+    bins_mid = seq(0.4, 2.0, 0.2), # midpoints of bins for plotting later
+    xlab     = "Fluid intake (l/h)",
+    main     = "Empirical probability of bombing \n vs fluid intake"
+  ),
+  Carbs = list(
+    bins     = seq(20, 110, 10),
+    bins_mid = seq(25, 105, 10),
+    xlab     = "Carbohydrate intake (g/h)",
+    main     = "Empirical probability of bombing \n vs carbohydrate intake"
+  ),
+  AveSpeed = list(
+    bins     = seq(6, 16, 1),
+    bins_mid = seq(6.5, 15.5, 1),
+    xlab     = "Average Speed (km/h)",
+    main     = "Empirical probability of bombing \n vs average speed"
+  )
+)
+
+Y <- data[, 1] * 1 # vector of the binary response (bombed/did not bomb)
+# directory to store plot pngs
+dir.create("_Wood_Groll_fig", showWarnings = FALSE) 
+
+for (var_name in names(vars)) {
+  v        <- vars[[var_name]]
+  bins     <- v$bins
+  bins_mid <- v$bins_mid
+  n_bins   <- length(bins) - 1
+
+  empirical_M <- rep(NA, n_bins)
+  empirical_F <- rep(NA, n_bins)
+
+  for (i in 1:n_bins) {
+    condition_M <- (data[[var_name]] > bins[i]) & 
+      (data$Sex == 1) & (data[[var_name]] <= bins[i+1])
+    empirical_M[i] <- mean(na.omit(Y[condition_M]))
+
+    condition_F <- (data[[var_name]] > bins[i]) & 
+      (data$Sex == 0) & (data[[var_name]] <= bins[i+1])
+    empirical_F[i] <- mean(na.omit(Y[condition_F]))
+  }
+ # store the plot as a png in the folder:
+  png(paste0("_Wood_Groll_fig/", var_name, ".png"), 
+      width = 5*300, height = 5*300, res = 300)
+
+  plot(empirical_M ~ bins_mid,
+       pch  = 16,
+       col  = "royalblue3",
+       ylim = c(0, 1),
+       xlab = v$xlab,
+       ylab = "Probability of bombing",
+       main = v$main)
+
+  points(empirical_F ~ bins_mid, col = "pink", pch = 17)
+  # smooth lines:
+  lines(empirical_M  ~ bins_mid, col = "royalblue3", lwd = 2)
+  lines(empirical_F  ~ bins_mid, col = "pink",       lwd = 2)
+
+  legend("bottomleft",
+         legend     = c("Male", "Female"),
+         title      = "Sex",
+         title.font = 2,
+         col        = c("royalblue3", "pink"),
+         pch        = c(16, 17),
+         lwd        = 2,
+         bty        = "n")
+
+  invisible(dev.off())
+}
+
+```
+
+\vspace{-0.5cm}
+
+\begin{figure}[H]
+    \centering
+    
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{_Wood_Groll_fig/Fluid.png}
+        \caption{Empirical probabilities of bombing for each sex according to their fluid intake, in litres per hour, for the 2024 Cape Town Marathon.}
+        \label{fig:fluid}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{_Wood_Groll_fig/Carbs.png}
+        \caption{Empirical probabilities of bombing for each sex according to their carbohydrate intake, in grams per hour, for the 2024 Cape Town Marathon.}
+        \label{fig:carbs}
+    \end{subfigure}
+    
+    \vspace{0.5em}
+    
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{_Wood_Groll_fig/AveSpeed.png}
+        \caption{Empirical probabilities of bombing for each sex according to their average speed (km/h) over the first half of the Cape Town marathon (2024).}
+        \label{fig:speed}
+    \end{subfigure}
+    
+\end{figure}
+
+Figures \ref{fig:fluid} and \ref{fig:carbs} certainly indicate a non-linear trend for both sexes (the probability of bombing is much lower for the median fluid/carbohydrate intakes and much higher at the extremes). There may be some linearity in \ref{fig:speed} for males with moderate speeds and females with slower speeds, but outside of these ranges, the empirical probabilities become more erratic. Thus a non-linear model such as a neural network would be very appropriate here to capture these more complex patterns.
+
+# b)
+
+\begin{align}
+\sigma(z_j)
+&= \frac{\exp(z_j)}{\sum_{i=1}^{q}\exp(z_i)} \\[6pt]
+&= \frac{\exp\big((z_j - z^\star) + z^\star\big)}
+       {\sum_{i=1}^{q}\exp\big((z_i - z^\star) + z^\star\big)} \\[6pt]
+&= \frac{\exp(z_j - z^\star)\exp(z^\star)}
+       {\exp(z^\star)\sum_{i=1}^{q}\exp(z_i - z^\star)} \\[6pt]
+&= \frac{\exp(z_j - z^\star)}
+       {\sum_{i=1}^{q}\exp(z_i - z^\star)}.
+\end{align}
+
+One would rather evaluate the expression given by (4) than that given by (1) as it is more numerically stable: the denominator in (1) can easily tend to either zero or infinity whereas the $\exp{(z_i - z^*)}$ terms are bounded between 0 and 1 (and at least one of them will be equal to 1), making the denominator in (4) much better behaved.
+
+# c)
+
+```{r softmax function}
+
+softmax <- function(Z){
+  
+  # Construct a column vector of ones, that matches the number of rows of Z:
+  q <- nrow(Z)
+  ones <- matrix(1, nrow = q, ncol=1)
+  
+  # Find the maximum of each of the columns of Z
+  z_star <- apply(Z, 2, max)
+  # Turn the above into a matrix for subtraction with Z
+  # (such that each column is filled by a value of z_star)
+  z_star_mat <- ones %*% rbind(z_star)
+  
+  num <- exp(Z - z_star_mat) # Numerator of the output (matrix form)
+  denom <- ones %*% rbind(apply(num, 2, sum)) # Matrix denominator of output
+  
+  return(num/denom) # Return the element-wise division of the matrices
+}
+```
+
+# d)
+
+Let $\mathbf{X}^u_{N \times p^u}$ and $\mathbf{X}^v_{N \times p^v}$ denote the input matrices corresponding to the 'u' and 'v' sub-networks respectively. In fact, note that we can partition $\mathbf{X}_{N \times p}$ (the matrix of all the inputs) as follows:
+
+\begin{equation*}
+\mathbf{X} = 
+\left[\begin{array}{c | c}
+\mathbf{X}^u & \mathbf{X}^v
+\end{array}\right].
+\end{equation*}
+
+Thus, with this partitioning approach in mind, we can evaluate the network as a standard (2m,2)-network - in other words with the familiar updating equations:
+
+\begin{equation*}
+\mathbf{A}^l = \sigma_l\left(\mathbf{W}_l^{T} \mathbf{A}^{l-1} + \mathbf{b}^l\mathbf{1}\right), \quad l = 1, 2, 3;
+\end{equation*} \begin{align*}
+\text{Where: }\mathbf{A}^0 &= \mathbf{X}^T = 
+\left[\begin{array}{c}
+\left(\mathbf{X}^u\right)^T\\
+\noalign{\vskip 3pt}
+\hline
+\noalign{\vskip 3pt}
+\left(\mathbf{X}^v\right)^T 
+\end{array}\right], \\[10pt]
+\mathbf{W}_1 &= \left[
+\begin{array}{c | c}
+\mathbf{W}_1^{u} \in \mathbb{R}^{p^u \times m} 
+& \mathbf{0} \in \mathbb{R}^{p^u \times m}\\[6pt]
+\hline
+\rule{0pt}{12pt}
+\mathbf{0} \in \mathbb{R}^{p^v \times m} 
+& \mathbf{W}_1^{v} \in \mathbb{R}^{p^v \times m}
+\end{array}
+\right], \quad
+\mathbf{W}_2 = \left[
+\begin{array}{c | c}
+\mathbf{W}_2^{u} \in \mathbb{R}^{m \times 1} 
+& \mathbf{0} \in \mathbb{R}^{m \times 1}\\[6pt]
+\hline
+\rule{0pt}{12pt}
+\mathbf{0} \in \mathbb{R}^{m \times 1} 
+& \mathbf{W}_2^{v} \in \mathbb{R}^{m \times 1}
+\end{array}
+\right], \hspace{0.2cm} \& \hspace{0.2cm}
+\mathbf{W}_3 \in \mathbb{R}^{2 \times q}. \\[14pt]
+\mathbf{b}^1 &= \left[\begin{array}{c}
+\mathbf{b}^{1u} \in \mathbb{R}^{p^u \times 1}\\
+\noalign{\vskip 3pt}
+\hline
+\noalign{\vskip 3pt}
+\mathbf{b}^{1v} \in \mathbb{R}^{p^v \times 1}
+\end{array}\right], \qquad 
+\mathbf{b}^2 = \left[\begin{array}{c}
+\mathbf{b}^{2u} \in \mathbb{R}^{1 \times 1}\\
+\noalign{\vskip 3pt}
+\hline
+\noalign{\vskip 3pt}
+\mathbf{b}^{2v} \in \mathbb{R}^{1 \times 1}
+\end{array}\right], \quad \& \quad
+\mathbf{b}^3 \in \mathbb{R}^{q \times 1}.
+\end{align*}
+
+# e)
+
+\vspace{-0.3cm}
+
+```{r data pre-processing}
+
+Xu <- cbind(data$AveSpeed, data$Sex)
+Xv <- cbind(data$Fluid, data$Carbs)
+
+# one-hot encode the response: column 1 = bombed, column 2 = didn't bomb
+Y <- matrix(c(data$Bombed*1, (1 - data$Bombed*1)), ncol = 2, byrow = FALSE)
+```
+
+# f)
+
+To find the number of weights and biases on a split-brain-(2m,2)-network with $p^u$ and $p^v$ inputs to each hemisphere and $q$ outputs, we must add the number of weights in $\mathbf{W}_1^u, \, \mathbf{W}_1^v, \, \mathbf{W}_2^u, \, \mathbf{W}_2^v, \, \mathbf{W}_3$ and the number of biases in $\mathbf{b}^{1u}, \, \mathbf{b}^{1v}, \, \mathbf{b}^{2u}, \, \mathbf{b}^{2v}, \, \mathbf{b}^{3}$ respectively. We have:
+
+\begin{align*}
+\text{Number of weights } &= p^u m + p^v m + m + m + 2q \quad \text{and} \\
+\text{Number of biases } &= m + m + 1 + 1 + q.
+\end{align*}
+
+Evaluated for our particular problem at $m = 4, \, q=2 \text{ and } p^u = p^v = 2$, this is:
+
+\begin{align*}
+\text{Number of weights } &= 2 \times 4 + 2 \times 4 + 4 + 4 + 2 \times 2 = 28 \quad \text{and} \\
+\text{Number of biases } &= 4 + 4 + 1 + 1 + 2 = 12.
+\end{align*}
+
+# g)
+
+```{r neural net}
+# A function evaluating a forward pass of a split-brain-(2m-2)-network: 
+
+neural_net = function(Xu, Xv, Y, theta, m, nu)
+{
+	 # Relevant dimensional variables:
+	 N = dim(Xu)[1]
+	 pu = dim(Xu)[2]
+	 pv = dim(Xv)[2]
+	 q = dim(Y)[2]
+	 
+   # Populate weight-matrix and bias vectors:
+	 indexW1u = 1: (pu*m)
+	 indexW1v = max(indexW1u) + 1:(pv*m)
+   W1    = cbind(rbind(matrix(theta[indexW1u], pu, m), matrix(0, pv, m)),
+                 rbind(matrix(0, pu, m), matrix(theta[indexW1v], pv, m)))
+   indexW2u = max(indexW1v) + 1:m
+   indexW2v = max(indexW2u) + 1:m
+   W2    = cbind(rbind(matrix(theta[indexW2u], m, 1), matrix(0, m, 1)),
+                 rbind(matrix(0, m, 1), matrix(theta[indexW2v], m, 1)))
+   indexW3 = max(indexW2v)+1:(2*q)
+   W3    = matrix(theta[indexW3], 2, q)
+   indexb1u = max(indexW3)+ 1:m
+   indexb1v = max(indexb1u) + 1:m
+   b1    = rbind(matrix(theta[indexb1u], m, 1), matrix(theta[indexb1v], m, 1))
+   indexb2u = max(indexb1v)+1
+   indexb2v = max(indexb2u) + 1
+   b2    = rbind(matrix(theta[indexb2u],1,1), matrix(theta[indexb2v],1,1))
+   indexb3 = max(indexb2v) + 1:q 
+   b3    = matrix(theta[indexb3], q,1)
+   
+   # Evaluate network:
+   X = cbind(Xu, Xv)
+   ones = matrix(1,N,1)
+   A0   = t(X) # BC
+   A1   = tanh(t(W1)%*%A0+b1%*%t(ones)) # hidden 1
+   A2   = tanh(t(W2)%*%A1+b2%*%t(ones)) # hidden 2
+   A3   = softmax(t(W3)%*%A2+b3%*%t(ones)) # output layer
+   Yhat = t(A3)
+
+   # Calculate error (cross entropy with one-hot encoding):
+   eps <- 1e-15 # introduced a floor to ensure we don't take log(0)
+    E1 = -sum(Y * log(pmax(Yhat, eps))) 
+   E2 = E1/N + nu/N*(sum(W1^2) + sum(W2^2) + sum(W3^2))
+
+   # Return predictions and error:
+   return(list(A2=A2, A1=A1,Yhat = Yhat,E1 = E1, E2 = E2))
+}
+
+```
+
+# h)
+
+```{r validation analysis}
+
+set.seed(2026)
+
+# ===================================================================
+# Split the data into a training and a validation set (80/20 split)
+# ===================================================================
+
+N    = dim(Xu)[1]
+set  = sample(1:N,0.8*N,replace = FALSE) 
+Xu_train = Xu[set,, drop=FALSE]
+Xv_train = Xv[set,, drop=FALSE]
+Y_train = Y[set,, drop = FALSE]
+
+Xu_val = Xu[-set,, drop = FALSE]
+Xv_val = Xv[-set,, drop =FALSE]
+Y_val = Y[-set,, drop = FALSE]
+
+# ========================================================================
+# Run the validation analysis
+# ========================================================================
+
+# Penalised objective function (to be optimised) - using training data
+
+obj_pen = function(pars)
+{
+	 res = neural_net(Xu_train, Xv_train, Y_train, pars, m, nu)
+	 return(res$E2)
+}
+
+m = 4 # set a value for m
+npars = 28 + 12 # number of parameters (see 1f)
+theta_rand = runif(npars, -1, 1) # initial parameter values
+
+n_val   = 15 # number of nus
+nu_seq = exp(seq(-5,3,length = n_val)) # sequence of nus
+Eval   = rep(NA,n_val) # vector for the validation errors (E1)
+
+for(i in 1:n_val)
+{
+	nu      = nu_seq[i]
+	# Find the optimal parameters (on the training set) for each nu
+  res_opt = nlm(obj_pen,theta_rand,iterlim = 500)
+  # Use these parameters to evaluate the error on the validation set:
+  res_val = neural_net(Xu_val,Xv_val, Y_val,res_opt$estimate,m,0) 
+  Eval[i] = res_val$E1
+}
+
+# =================================================
+# Plot the validation errors vs nu
+# =================================================
+
+# Error of the null model:
+Yhat_null = matrix(rep(colMeans(Y_train), nrow(Y_val)), nrow(Y_val), 
+                   ncol(Y_train), byrow=TRUE)
+eps <- 1e-15
+Eval_null = -sum(Y_val * log(pmax(Yhat_null, eps)))
+
+# Plot the curve, including lines for the null model and at the optimal nu:
+
+png("_Wood_Groll_fig/Val_plot.png", width = 5*300, height = 5*300, res = 300)
+plot(Eval~log(nu_seq),type = 'b',
+     xlab = expression(log(nu)),
+     ylab = "Validation error (cross-entropy)",
+     main = expression('Validation error vs '*nu),
+     col = 'seagreen')
+abline(v = log(nu_seq)[which.min(Eval)], lty = 2, lwd = 2, col = "darkgrey")
+abline(h =  Eval_null, lty = 2, lwd = 2, col = "maroon")
+invisible(dev.off())
+
+# Find the lowest error and the corresponding nu value 
+nu_opt <- nu_seq[which.min(Eval)]
+error_opt <- Eval[which.min(Eval)]
+
+```
+
+Figure \ref{fig:val_plot} displays a rather unstable validation plot. This is expected as it corresponds to only one validation set (rather than cross-validated estimates of the errors). Interestingly, as $\nu$ increases, we see that the model performs increasingly poorly, and in the case of the last $\nu$ value, it performs as badly as the null model, indicating that the more regularized models do not capture the signal in the validation set very well. Due to the instability of these figures (and the upward trend to the right), we simply choose the $\nu$ parameter corresponding to the lowest error (`r round(error_opt,3)`) in this case: $\nu = `r round(nu_opt, 3)`$.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width = 0.7\linewidth]{_Wood_Groll_fig/Val_plot.png}
+\caption{Plot of cross entropy validation errors corresponding to a sequence of regularisation parameters $\nu$. Note that the grey line corresponds to the $\nu$ value with the lowest error and the red line to the error of the null model, for reference.}
+\label{fig:val_plot}
+\end{figure}
+
+# i)
+
+```{r response curves}
+
+# Refit the model on ALL the data at the chosen nu
+obj_final <- function(pars)
+{
+  res <- neural_net(Xu, Xv, Y, pars, m, nu_opt)
+  return(res$E2)
+}
+
+set.seed(2026)
+theta_rand <- runif(npars, -1, 1)
+res_final <- nlm(obj_final, theta_rand, iterlim = 1000)
+
+# Grid over Fluid and Carbs
+M <- 100
+fluid_grid <- seq(min(Xv[,1]), max(Xv[,1]), length = M)
+carb_grid  <- seq(min(Xv[,2]), max(Xv[,2]), length = M)
+
+xx1 <- rep(fluid_grid, M)
+xx2 <- rep(carb_grid, each = M)
+
+# Dummy response matrix: only needed for dimensions
+YY <- matrix(0, M^2, 2)
+
+# Fix AveSpeed at 12 km/h and compare Sex = 0 vs Sex = 1
+XU_sex0 <- cbind(rep(12, M^2), rep(0, M^2))
+XU_sex1 <- cbind(rep(12, M^2), rep(1, M^2))
+XV_grid <- cbind(xx1, xx2)
+
+# evaluate the predictions of the final model over these grids
+res_sex0 <- neural_net(XU_sex0, XV_grid, YY, res_final$estimate, m, 0)
+res_sex1 <- neural_net(XU_sex1, XV_grid, YY, res_final$estimate, m, 0)
+
+# create a colour gradient for plotting
+library(colorspace)
+
+color.gradient = function(x, colors=c('blue','lightgreen','yellow'), colsteps=50)
+{
+  colpal = colorRampPalette(colors)
+  return(
+    colpal(colsteps)[ findInterval(x, seq(min(x),max(x), length=colsteps)) ]
+  )
+}
+
+# Use one common scale for both panels
+z_all <- c(res_sex0$Yhat[,1], res_sex1$Yhat[,1])
+leg_vals <- seq(min(z_all), max(z_all), length = 5)
+leg_cols <- color.gradient(leg_vals)
+
+# Plot response surfaces (looped to reduce space on the page)
+
+# going to plot 2 plots: one for the men and one for the women
+# (here is a list of the particulars that'll be needed to plot each)
+plots <- list(
+  Female = list(
+    file  = "_Wood_Groll_fig/Female_response.png",
+    yhat  = res_sex0$Yhat[, 1],
+    main  = "Predicted bombing \n probabilities for women \n averaging 12km/h"
+  ),
+  Male = list(
+    file  = "_Wood_Groll_fig/Male_response.png",
+    yhat  = res_sex1$Yhat[, 1],
+    main  = "Predicted bombing \n probabilities for men \n averaging 12km/h"
+  )
+)
+
+# plotting: 
+for (p in plots) {
+  png(p$file, width = 5*300, height = 5*300, res = 300)
+  
+  plot(xx1, xx2,
+       pch  = 16, cex = 0.5,
+       col  = color.gradient(p$yhat),
+       xlab = "Fluid intake (l/h)",
+       ylab = "Carbohydrate intake (g/h)",
+       main = p$main,
+       xlim = range(fluid_grid),
+       ylim = range(carb_grid),
+       xaxs = "i", yaxs = "i")
+  
+  legend("bottomleft",
+         inset      = 0.02,
+         title      = "P(Bombed)",
+         title.font = 2,
+         legend     = sprintf("%.2f", leg_vals),
+         pch        = 15,
+         col        = leg_cols,
+         pt.cex     = 1.2,
+         bty        = "n",
+         cex        = 0.65)  
+  
+  invisible(dev.off())
+}
+
+```
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{_Wood_Groll_fig/Female_response.png}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{_Wood_Groll_fig/Male_response.png}
+    \end{subfigure}
+    \caption{Response curves over fluid (l/h) and carbohydrate (g/h) intake for women (left) and men (right) running at an average speed of 12km/h for the first half of the Cape Town Marathon in 2024.}
+    \label{fig:responses}
+\end{figure}
+
+# j)
+
+```{r standard neural net}
+
+set.seed(2026)
+
+d = c(8, 2) # standard network to be compared will be an (8,2) network
+
+std_neural_net = function(X,Y, theta,d, nu)
+{
+	 # Relevant dimensional variables:
+	 N = dim(X)[1]
+	 p = dim(X)[2]
+	 q = dim(Y)[2]
+  
+   
+	 dims = c(p, d, q)
+	 
+   # Populate weight-matrix and bias vectors:
+	 index = 1:(dims[1]*dims[2])
+   W1    = matrix(theta[index],dims[1],dims[2])
+   index = max(index)+1:(dims[2]*dims[3])
+   W2    = matrix(theta[index],dims[2],dims[3])
+   index = max(index)+1:(dims[3]*dims[4])
+   W3    = matrix(theta[index],dims[3],dims[4])
+   
+   index = max(index)+1:(dims[2])
+   b1    = matrix(theta[index],dims[2],1)
+   index = max(index)+1:(dims[3])
+   b2    = matrix(theta[index],dims[3],1)
+   index = max(index)+1:(dims[4])
+   b3    = matrix(theta[index],dims[4],1)
+   
+   # Evaluate network:
+   ones = matrix(1,N,1)
+   A0   = t(X) # BC
+   A1   = tanh(t(W1)%*%A0+b1%*%t(ones)) # hidden 1
+   A2   = tanh(t(W2)%*%A1+b2%*%t(ones)) # hidden 2
+   A3   = softmax(t(W3)%*%A2+b3%*%t(ones)) # output layer
+   Yhat = t(A3)
+   
+
+   # Calculate error:
+   
+   # cross entropy error
+    eps <- 1e-15 # introduced a floor to ensure we don't take log(0)
+    E1 = -sum(Y * log(pmax(Yhat, eps))) 
+   E2 = E1/N + nu/N*(sum(W1^2) + sum(W2^2) + sum(W3^2))
+
+   # Return predictions and error:
+   return(list(A2=A2, A1=A1,Yhat = Yhat,E1 = E1, E2 = E2))
+}
+
+
+# Validation analysis (select a nu again to compare the best models):
+
+X = as.matrix(data[,2:5]) # all the inputs now in a matrix
+X_train = X[set,, drop=FALSE] # use the same 80/20 split as above
+X_val = X[-set,, drop = FALSE]
+
+# Penalised objective function (to be optimised) - using training data
+obj_pen_std = function(pars)
+{
+	 res = std_neural_net(X_train, Y_train, pars, d, nu)
+	 return(res$E2)
+}
+
+# To find the new number of parameters required:
+p = dim(X)[2]
+q = dim(Y)[2]
+dims = c(p,d,q)
+# add all weights and biases:
+npars_std = sum(dims[-1]*dims[-length(dims)]) + sum(dims[-1]) 
+theta_rand_std = runif(npars_std, -1,1)
+
+
+Eval_std   = rep(NA,n_val) # use the same nus as above
+
+for(i in 1:n_val)
+{
+	nu      = nu_seq[i]
+	# Find the optimal parameters (on the training set) for each nu
+  res_opt = nlm(obj_pen_std,theta_rand_std,iterlim = 500)
+  # Use these parameters to evaluate the error on the validation set:
+  res_val = std_neural_net(X_val, Y_val,res_opt$estimate, d, 0) 
+  Eval_std[i] = res_val$E1
+}
+
+
+best_nu_std = nu_seq[which.min(Eval_std)]
+
+# Refit the model on ALL the data at the chosen nu
+obj_final_std <- function(pars)
+{
+  res <- std_neural_net(X, Y, pars, d, best_nu_std)
+  return(res$E2)
+}
+
+
+res_final_std <- nlm(obj_final_std, theta_rand_std, iterlim = 1000)
+
+
+# Find the errors of the two final models on all the available data
+error_std <- std_neural_net(X, Y, res_final_std$estimate, d, best_nu_std)$E1
+error_split <- neural_net(Xu, Xv, Y, res_final$estimate, m, nu_opt)$E1
+
+
+```
+
+The cross-entropy error of the final split-brain model (on all the data at the optimal nu) was `r round(error_split,2)` while the error of the final standard neural network was `r round(error_std, 2)`. This is quite a large discrepancy, suggesting that following the same modelling procedure, the standard neural network was able to provide a better fit on the present data.
+
+It seems therefore that there is no empirical advantage to using the split-brain network to model the present data. Indeed if one returns to examine the EDA plots (\ref{fig:fluid}, \ref{fig:carbs}, \ref{fig:speed}), one can see that there is some interaction between sex, and fluid and carbohydrate intake, and that average speed on its own is not as related to the response as the other inputs. By incorporating all features into a unified model from the start, the standard neural network is likely more sensitive to these interactions, and has more control over the weighting of individual features in the response.
